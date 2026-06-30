@@ -29,10 +29,11 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
+
 def search(query: str, max_results: int = 10, retries: int = 2):
     """
     Optimizes the incoming query and retrieves clean search results
-    using version-agnostic positional arguments.
+    using a bulletproof, version-safe parameter fallback strategy.
     """
     search_phrase = optimize_query_generically(query)
 
@@ -42,9 +43,15 @@ def search(query: str, max_results: int = 10, retries: int = 2):
 
         try:
             with DDGS() as ddgs:
-                # FIX: Pass search_phrase positionally (without query= or keywords=)
-                # to bypass version differences completely!
-                raw_generator = ddgs.text(search_phrase, max_results=max_results)
+                # Version-Safe fallback trick:
+                # Try the modern 'query' keyword, then 'keywords', then fallback to positional
+                try:
+                    raw_generator = ddgs.text(query=search_phrase, max_results=max_results)
+                except TypeError:
+                    try:
+                        raw_generator = ddgs.text(keywords=search_phrase, max_results=max_results)
+                    except TypeError:
+                        raw_generator = ddgs.text(search_phrase, max_results=max_results)
 
                 for item in list(raw_generator):
                     url = item.get("href", item.get("link", ""))
