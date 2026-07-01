@@ -6,3 +6,4 @@ lxml
 sentence-transformers
 torch
 torchvision
+groq
