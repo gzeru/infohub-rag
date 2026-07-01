@@ -23,7 +23,7 @@ def generate_answer(context: str, query: str):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            model="llama3-8b-8192",  # Free tier eligible, blazingly fast
+            model="llama-3.1-8b-instant",  # Free tier eligible, blazingly fast
             temperature=0.3          # Low temperature ensures it sticks to your search context
         )
         return chat_completion.choices[0].message.content
