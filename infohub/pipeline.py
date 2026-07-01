@@ -14,9 +14,16 @@ from collections import defaultdict
 
 
 def run_pipeline(query: str):
+    # KORREKTUR 1: Expliziter Neustart des Ausgabezustands, um Speichergeister zu verhindern
+    output = {}
+    scored_chunks = []
 
     results = search(query)
-    scored_chunks = []
+    
+    # Absicherung: Falls die Suchmaschine gar nichts liefert, sofort leer abbrechen
+    if not results:
+        print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
+        return {}
 
     # 1. Query scope
     scope = detect_scope(query)
@@ -30,8 +37,9 @@ def run_pipeline(query: str):
 
     # 2. Fetch + extract + chunk + score
     for result in results:
-
         url = result.get("url")
+        ddg_snippet = result.get("snippet", "")  # Holen des Live-Textausschnitts von DDG
+        
         if not url:
             continue
 
@@ -40,17 +48,22 @@ def run_pipeline(query: str):
         page = fetch(url)
         html = page.get("content", "")
 
-        if not html:
-            continue
+        text = ""
+        if html:
+            text = extract_text(html)
+        
+        # KORREKTUR 2: Der generische Web-Fallback. 
+        # Wenn Scraping fehlschlägt oder blockiert wird, retten wir die Pipeline mit dem DDG-Snippet.
+        if not text and ddg_snippet:
+            print(f"Scraping blockiert oder leer für {url}. Nutze DDG-Snippet als Fallback.")
+            text = ddg_snippet
 
-        text = extract_text(html)
         if not text:
             continue
 
         chunks = segment_text(text)
 
         for chunk in chunks:
-
             if not is_meaningful(chunk):
                 continue
 
@@ -69,7 +82,6 @@ def run_pipeline(query: str):
     MAX_PER_DOMAIN = 3
 
     for score, chunk, url in scored_chunks:
-
         domain = urlparse(url).netloc
 
         if domain_count[domain] >= MAX_PER_DOMAIN:
@@ -88,14 +100,16 @@ def run_pipeline(query: str):
     clusters = cluster_chunks(filtered)
 
     # 6. Build output
-    output = {}
-
     for i, cluster in enumerate(clusters):
-
-        # semantic representative sentence (IMPORTANT STEP)
+        # Semantic representative sentence (IMPORTANT STEP)
         representative = pick_representative_sentence(query, cluster)
 
-        label = representative if representative else f"Group {i+1}"
+        # KORREKTUR 3: Robustes Labeling für das UI. 
+        # Verhindert riesige Schachtelsätze oder unschöne Code-Fragmente in den Dictionary-Schlüsseln.
+        if representative and len(representative) < 90 and "youtube" not in representative.lower():
+            label = representative.strip()
+        else:
+            label = f"Relevante Suchergebnisse Gruppe {i+1}"
 
         output[label] = cluster[:3]
 
