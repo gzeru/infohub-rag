@@ -30,6 +30,34 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
+def build_xml_context(results: list) -> str:
+    """
+    Abstrakte Kapselungsebene: Wandelt die Suchergebnisse in ein striktes 
+    XML-Schema um, um syntaktische Barrieren für den Attention-Mechanismus 
+    des LLMs zu errichten.
+    """
+    if not results:
+        return "<search_knowledge_base>\n  <!-- Keine Ergebnisse gefunden -->\n</search_knowledge_base>"
+
+    context_elements = ["<search_knowledge_base>"]
+    
+    for index, item in enumerate(results):
+        snippet = item.get("snippet", "").strip()
+        title = item.get("title", "").strip()
+        url = item.get("url", "").strip()
+        
+        context_elements.append(f'  <source_node id="{index + 1}">')
+        context_elements.append(f"    <metadata>")
+        context_elements.append(f"      <title>{title}</title>")
+        context_elements.append(f"      <source_url>{url}</source_url>")
+        context_elements.append(f"    </metadata>")
+        context_elements.append(f"    <raw_fact_stream>\n{snippet}\n    </raw_fact_stream>")
+        context_elements.append(f"  </source_node>")
+        
+    context_elements.append("</search_knowledge_base>")
+    return "\n".join(context_elements)
+
+
 def search(query: str, max_results: int = 2):
     """
     Optimizes the incoming query and retrieves clean search results
@@ -43,13 +71,13 @@ def search(query: str, max_results: int = 2):
         if "ethiopia" not in search_phrase:
             search_phrase = f"Ethiopia {search_phrase}"
 
-    # 3. Initialize Tavily Client (Replace placeholder with your actual key if not using env vars)
+    # 3. Initialize Tavily Client
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
     client = TavilyClient(api_key=TAVILY_API_KEY)
 
     print(f"[DEBUG] Sende optimierte Query an Tavily API: '{search_phrase}'")
     
-    results = []
+    raw_mapped_results = []
     try:
         # Abruf über Tavily
         response = client.search(
@@ -60,7 +88,6 @@ def search(query: str, max_results: int = 2):
         
         raw_results = response.get("results", [])
         
-        # Mapping der Feldnamen, damit der Rest deiner Pipeline unverändert bleibt
         for item in raw_results:
             url = item.get("url", "")
             
@@ -68,15 +95,18 @@ def search(query: str, max_results: int = 2):
             if "en.m.wikipedia.org" in url:
                 url = url.replace("en.m.wikipedia.org", "en.wikipedia.org")
                 
-            results.append({
+            raw_mapped_results.append({
                 "title": item.get("title", ""),
                 "url": url,
-                "snippet": item.get("content", "")  # Tavily liefert den bereinigten Text in 'content'
+                "snippet": item.get("content", "")  
             })
             
-        print(f"[DEBUG] Pipeline erfolgreich! {len(results)} Ergebnisse extrahiert.")
-        return results
+        print(f"[DEBUG] API-Abruf erfolgreich! {len(raw_mapped_results)} Ergebnisse geladen.")
+        
+        # JETZT WICHTIG: Wir jagen die Ergebnisse durch die abstrakte XML-Strukturierung
+        xml_context = build_xml_context(raw_mapped_results)
+        return xml_context
 
     except Exception as e:
         print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}")
-        return []
+        return build_xml_context([])
