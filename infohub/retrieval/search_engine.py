@@ -30,38 +30,10 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
-def build_xml_context(results: list) -> str:
-    """
-    Abstrakte Kapselungsebene: Wandelt die Suchergebnisse in ein striktes 
-    XML-Schema um, um syntaktische Barrieren für den Attention-Mechanismus 
-    des LLMs zu errichten.
-    """
-    if not results:
-        return "<search_knowledge_base>\n  <!-- Keine Ergebnisse gefunden -->\n</search_knowledge_base>"
-
-    context_elements = ["<search_knowledge_base>"]
-    
-    for index, item in enumerate(results):
-        snippet = item.get("snippet", "").strip()
-        title = item.get("title", "").strip()
-        url = item.get("url", "").strip()
-        
-        context_elements.append(f'  <source_node id="{index + 1}">')
-        context_elements.append(f"    <metadata>")
-        context_elements.append(f"      <title>{title}</title>")
-        context_elements.append(f"      <source_url>{url}</source_url>")
-        context_elements.append(f"    </metadata>")
-        context_elements.append(f"    <raw_fact_stream>\n{snippet}\n    </raw_fact_stream>")
-        context_elements.append(f"  </source_node>")
-        
-    context_elements.append("</search_knowledge_base>")
-    return "\n".join(context_elements)
-
-
-def search(query: str, max_results: int = 2):
+def search(query: str, max_results: int = 2) -> list:
     """
     Optimizes the incoming query and retrieves clean search results
-    using the stable, RAG-optimized Tavily API platform.
+    as a raw list of dictionaries using the Tavily API platform.
     """
     # 1. Clean the incoming query using your existing function
     search_phrase = optimize_query_generically(query)
@@ -103,10 +75,9 @@ def search(query: str, max_results: int = 2):
             
         print(f"[DEBUG] API-Abruf erfolgreich! {len(raw_mapped_results)} Ergebnisse geladen.")
         
-        # JETZT WICHTIG: Wir jagen die Ergebnisse durch die abstrakte XML-Strukturierung
-        xml_context = build_xml_context(raw_mapped_results)
-        return xml_context
+        # JETZT KORREKT: Direkte Rückgabe der Rohdaten-Liste für die Pipeline
+        return raw_mapped_results
 
     except Exception as e:
         print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}")
-        return build_xml_context([])
+        return []
