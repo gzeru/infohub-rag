@@ -1,6 +1,6 @@
 import re
-import time
-from duckduckgo_search import DDGS
+import os
+from tavily import TavilyClient
 
 
 def optimize_query_generically(raw_query: str) -> str:
@@ -30,62 +30,53 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
-def search(query: str, max_results: int = 10, retries: int = 2):
+def search(query: str, max_results: int = 5):
     """
     Optimizes the incoming query and retrieves clean search results
-    using a bulletproof, version-safe parameter fallback strategy.
+    using the stable, RAG-optimized Tavily API platform.
     """
+    # 1. Clean the incoming query using your existing function
     search_phrase = optimize_query_generically(query)
+    
+    # 2. Add geographic context automatically for infrastructure abbreviations
+    if "eeu" in search_phrase or "eep" in search_phrase:
+        if "ethiopia" not in search_phrase:
+            search_phrase = f"Ethiopia {search_phrase}"
 
-    for attempt in range(retries):
-        results = []
-        seen_urls = set()
+    # 3. Initialize Tavily Client (Replace placeholder with your actual key if not using env vars)
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "DEIN_KOPIERTER_TAVILY_KEY_HIER")
+    client = TavilyClient(api_key=TAVILY_API_KEY)
 
-        try:
-            with DDGS() as ddgs:
-                # Version-Safe fallback trick
-                try:
-                    raw_results = ddgs.text(query=search_phrase, max_results=max_results)
-                except TypeError:
-                    try:
-                        raw_results = ddgs.text(keywords=search_phrase, max_results=max_results)
-                    except TypeError:
-                        raw_results = ddgs.text(search_phrase, max_results=max_results)
+    print(f"[DEBUG] Sende optimierte Query an Tavily API: '{search_phrase}'")
+    
+    results = []
+    try:
+        # Abruf über Tavily
+        response = client.search(
+            query=search_phrase, 
+            search_depth="basic", 
+            max_results=max_results
+        )
+        
+        raw_results = response.get("results", [])
+        
+        # Mapping der Feldnamen, damit der Rest deiner Pipeline unverändert bleibt
+        for item in raw_results:
+            url = item.get("url", "")
+            
+            # Wikipedia Desktop-Normalisierung beibehalten
+            if "en.m.wikipedia.org" in url:
+                url = url.replace("en.m.wikipedia.org", "en.wikipedia.org")
+                
+            results.append({
+                "title": item.get("title", ""),
+                "url": url,
+                "snippet": item.get("content", "")  # Tavily liefert den bereinigten Text in 'content'
+            })
+            
+        print(f"[DEBUG] Pipeline erfolgreich! {len(results)} Ergebnisse extrahiert.")
+        return results
 
-                # CRITICAL FIX: If DDGS encounters an error or returns None, skip to next attempt
-                if not raw_results:
-                    continue
-
-                # Safely iterate over the returned list
-                for item in raw_results:
-                    if not isinstance(item, dict):
-                        continue
-                        
-                    url = item.get("href", "")
-                    if not url:
-                        continue
-
-                    # Normalize mobile Wikipedia links to desktop
-                    if "en.m.wikipedia.org" in url:
-                        url = url.replace("en.m.wikipedia.org", "en.wikipedia.org")
-
-                    if url in seen_urls:
-                        continue
-                    seen_urls.add(url)
-
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": url,
-                        "snippet": item.get("body", "")  # Included for utility
-                    })
-
-            if results:
-                return results
-
-        except Exception as e:
-            print(f"[Attempt {attempt + 1}] Search failed: {e}")
-            # Don't sleep on the final attempt
-            if attempt < retries - 1:
-                time.sleep(1)
-
-    return []
+    except Exception as e:
+        print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}")
+        return []
