@@ -13,6 +13,57 @@ from urllib.parse import urlparse
 from collections import defaultdict
 
 
+def build_xml_context_from_clusters(pipeline_output: dict) -> str:
+    """
+    Abstrakte Kapselungsebene: Transformiert semantische Text-Cluster in ein
+    striktes XML-Schema, um syntaktische Barrieren für den Attention-Mechanismus
+    des LLMs zu errichten. Verhindert die Verschmelzung von Attributen über Clustergrenzen hinweg.
+    """
+    if not pipeline_output:
+        return "<search_knowledge_base>\n  <!-- Keine relevanten Daten gefunden -->\n</search_knowledge_base>"
+
+    context_elements = ["<search_knowledge_base>"]
+    
+    node_id = 1
+    for label, chunks in pipeline_output.items():
+        for chunk in chunks:
+            clean_chunk = chunk.strip() if isinstance(chunk, str) else str(chunk).strip()
+            context_elements.append(f'  <source_node id="{node_id}">')
+            context_elements.append(f"    <semantic_context>{label}</semantic_context>")
+            context_elements.append(f"    <raw_fact_stream>\n{clean_chunk}\n    </raw_fact_stream>")
+            context_elements.append(f"  </source_node>")
+            node_id += 1
+        
+    context_elements.append("</search_knowledge_base>")
+    return "\n".join(context_elements)
+
+
+def get_zero_assumption_prompt() -> str:
+    """
+    Gibt die metakognitive Verarbeitungsvorschrift für das LLM zurück.
+    Löst das Problem von Fehlallokationen bei Entitätenwechseln abstrakt und generisch.
+    """
+    return (
+        "[ROLLE]\n"
+        "Du bist das deterministische Extraktions-Modul der InfoHub RAG Intelligence Engine. "
+        "Deine Aufgabe ist die strikte, faktenbasierte Beantwortung der Nutzeranfrage.\n\n"
+        "[PROZESSVORSCHRIFT]\n"
+        "1. QUELLEN-ISOLATION: Analysiere die Daten ausschließlich innerhalb der Grenzen jedes einzelnen <source_node>-Tags. "
+        "Behandle sie als isolierte Informationseinheiten.\n"
+        "2. ENTITÄTEN-VALIDIERUNG: Wenn ein Text innerhalb eines <source_node> einen historischen Wandel, "
+        "eine Aufspaltung, eine Fusion oder Vorgängerorganisationen beschreibt, isoliere deren Attribute strikt. "
+        "Ordne der angefragten Entität NUR Attribute zu, die im selben Satz explizit für den aktuellen Zustand (Gegenwart) gültig sind.\n"
+        "3. KOGNITIVES VERBOT: Es ist dir strengstens untersagt:\n"
+        "   - Logische Annahmen zu treffen, die nicht direkt im Text stehen.\n"
+        "   - Fakten aus unterschiedlichen <source_node>-Elementen zu einer neuen Behauptung zu verschmelzen, wenn diese nicht explizit im Text verknüpft sind.\n"
+        "   - Fehlende Informationen durch spekulatives Allgemeinwissen zu komplementieren.\n"
+        "4. LÜCKEN-MELDUNG: Wenn die <search_knowledge_base> die Frage nicht mit absoluter, zweifelsfreier Sicherheit beantwortet, "
+        "generiere keine plausible Antwort, sondern benenne präzise die unvollständigen Punkte.\n\n"
+        "[AUSGABEFORMAT]\n"
+        "Antworte direkt, präzise und rein sachlich. Verwende keine einleitenden Floskeln wie 'Basierend auf den Dokumenten...'."
+    )
+
+
 def run_pipeline(query: str):
     # KORREKTUR 1: Expliziter Neustart des Ausgabezustands, um Speichergeister zu verhindern
     output = {}
@@ -41,7 +92,7 @@ def run_pipeline(query: str):
     # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
         url = result.get("url")
-        ddg_snippet = result.get("snippet", "")  # Holen des Live-Textausschnitts von DDG
+        ddg_snippet = result.get("snippet", "")  # Holen des Live-Textausschnitts
         
         if not url:
             continue
