@@ -30,7 +30,7 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
-def search(query: str, max_results: int = 5):
+def search(query: str, max_results: int = 2):
     """
     Optimizes the incoming query and retrieves clean search results
     using the stable, RAG-optimized Tavily API platform.
