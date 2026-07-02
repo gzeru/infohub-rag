@@ -72,12 +72,19 @@ def run_pipeline(query: str):
     print(f"\n=== START PIPELINE-DEBUG FÜR QUERY: '{query}' ===")
 
     results = search(query)
-    print(f"[DEBUG 1/6] Suchmaschine liefert {len(results) if results else 0} Ergebnisse.")
     
     # Absicherung: Falls die Suchmaschine gar nichts liefert, sofort leer abbrechen
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return {}
+        
+    # Wenn 'results' fälschlicherweise ein String ist (z.B. durch alten XML-Code in search_engine.py),
+    # wandeln wir es hier lokal ab, damit die Pipeline nicht abstürzt.
+    if isinstance(results, str):
+        print("[WARNUNG] 'results' wurde als String empfangen. Wandle in Notfall-Liste um.")
+        results = [{"title": "Search Fallback", "url": "https://en.wikipedia.org", "snippet": results}]
+
+    print(f"[DEBUG 1/6] Suchmaschine liefert {len(results)} Ergebnisse.")
 
     # 1. Query scope
     scope = detect_scope(query)
@@ -91,8 +98,17 @@ def run_pipeline(query: str):
 
     # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
-        url = result.get("url")
-        ddg_snippet = result.get("snippet", "")  # Holen des Live-Textausschnitts
+        # ABSTRAKTE TYP-ABSICHERUNG: Schützt vor 'str' object has no attribute 'get'
+        if isinstance(result, str):
+            print(f" -> [{idx+1}/{len(results)}] Warnung: Einzelnes Resultat ist ein String. Nutze Fallback-Mapping.")
+            url = "https://en.wikipedia.org"
+            ddg_snippet = result
+        elif isinstance(result, dict):
+            url = result.get("url")
+            ddg_snippet = result.get("snippet", "")
+        else:
+            print(f" -> [{idx+1}/{len(results)}] Unbekannter Element-Datentyp {type(result)}. Überspringe.")
+            continue
         
         if not url:
             continue
