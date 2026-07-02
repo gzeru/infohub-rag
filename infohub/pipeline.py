@@ -12,7 +12,7 @@ from infohub.processing.semantic_labeling import pick_representative_sentence
 from urllib.parse import urlparse
 from collections import defaultdict
 import os
-from openai import OpenAI  # NEU: OpenAI-Bibliothek importiert
+from openai import OpenAI  # OpenAI-Bibliothek importiert
 
 
 def build_xml_context_from_clusters(pipeline_output: dict) -> str:
@@ -56,9 +56,9 @@ def get_zero_assumption_prompt() -> str:
         "eine Aufspaltung, eine Fusion oder Vorgängerorganisationen beschreibt, isoliere deren Attribute strikt. "
         "Ordne der angefragten Entität NUR Attribute zu, die im selben Satz explizit für den aktuellen Zustand (Gegenwart) gültig sind.\n"
         "3. KOGNITIVES VERBOT: Es ist dir strengstens untersagt:\n"
-        "   - Logische Annahmen zu treffen, die nicht direkt im Text stehen.\n"
-        "   - Fakten aus unterschiedlichen <source_node>-Elementen zu einer neuen Behauptung zu verschmelzen, wenn diese nicht explizit im Text verknüpft sind.\n"
-        "   - Fehlende Informationen durch spekulatives Allgemeinwissen zu komplementieren.\n"
+        "    - Logische Annahmen zu treffen, die nicht direkt im Text stehen.\n"
+        "    - Fakten aus unterschiedlichen <source_node>-Elementen zu einer neuen Behauptung zu verschmelzen, wenn diese nicht explizit im Text verknüpft sind.\n"
+        "    - Fehlende Informationen durch spekulatives Allgemeinwissen zu komplementieren.\n"
         "4. LÜCKEN-MELDUNG: Wenn die <search_knowledge_base> die Frage nicht mit absoluter, zweifelsfreier Sicherheit beantwortet, "
         "generiere keine plausible Antwort, sondern benenne präzise die unvollständigen Punkte.\n\n"
         "[AUSGABEFORMAT]\n"
@@ -96,6 +96,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
     # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
+        # SICHERHEITS-CHECK: Falls ein einzelnes Ergebnis ein String ist
         if isinstance(result, str):
             print(f" -> [{idx+1}/{len(results)}] Warnung: Einzelnes Resultat ist ein String. Nutze Fallback-Mapping.")
             url = "https://en.wikipedia.org"
@@ -113,7 +114,17 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
         print(f" -> [{idx+1}/{len(results)}] Fetching: {url}")
 
         page = fetch(url)
-        html = page.get("content", "")
+        
+        # --- SICHERHEITS-CHECK GEGEN DEN 'str' OBJECT HAS NO ATTRIBUTE 'get' FEHLER ---
+        html = ""
+        if isinstance(page, dict):
+            html = page.get("content", "")
+        elif isinstance(page, str):
+            print(f"    [!] 'fetch' lieferte einen String statt eines Dictionarys. Verwende Text direkt als HTML/Snippet.")
+            html = page
+        else:
+            print(f"    [!] Unerwarteter Rückgabetyp von 'fetch': {type(page)}")
+        # -------------------------------------------------------------------------------
 
         text = ""
         if html:
@@ -192,7 +203,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     print(f"[DEBUG 6/6] Pipeline beendet. Output-Keys: {list(output.keys())}")
     
     # =========================================================================
-    # NEU: ANBINDUNG AN DAS LLM (OPENAI CHAT COMPLETION)
+    # ANBINDUNG AN DAS LLM (OPENAI CHAT COMPLETION)
     # =========================================================================
     print("[DEBUG] Transformiere Cluster in XML-Schema...")
     xml_context = build_xml_context_from_clusters(output)
@@ -202,7 +213,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("[WARNUNG] Kein OPENAI_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
-        return "Fehler: OPENAI_API_KEY fehlt. Bitte im Terminal exportieren."
+        return "Fehler: OPENAI_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
 
     print("[DEBUG] Sende Daten und System-Prompt an OpenAI API...")
     try:
