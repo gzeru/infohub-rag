@@ -11,6 +11,8 @@ from infohub.processing.semantic_labeling import pick_representative_sentence
 
 from urllib.parse import urlparse
 from collections import defaultdict
+import os
+from openai import OpenAI  # NEU: OpenAI-Bibliothek importiert
 
 
 def build_xml_context_from_clusters(pipeline_output: dict) -> str:
@@ -64,8 +66,7 @@ def get_zero_assumption_prompt() -> str:
     )
 
 
-def run_pipeline(query: str):
-    # KORREKTUR 1: Expliziter Neustart des Ausgabezustands, um Speichergeister zu verhindern
+def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die finale Antwort
     output = {}
     scored_chunks = []
 
@@ -73,13 +74,10 @@ def run_pipeline(query: str):
 
     results = search(query)
     
-    # Absicherung: Falls die Suchmaschine gar nichts liefert, sofort leer abbrechen
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
-        return {}
+        return "Keine relevanten Suchergebnisse gefunden."
         
-    # Wenn 'results' fälschlicherweise ein String ist (z.B. durch alten XML-Code in search_engine.py),
-    # wandeln wir es hier lokal ab, damit die Pipeline nicht abstürzt.
     if isinstance(results, str):
         print("[WARNUNG] 'results' wurde als String empfangen. Wandle in Notfall-Liste um.")
         results = [{"title": "Search Fallback", "url": "https://en.wikipedia.org", "snippet": results}]
@@ -98,7 +96,6 @@ def run_pipeline(query: str):
 
     # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
-        # ABSTRAKTE TYP-ABSICHERUNG: Schützt vor 'str' object has no attribute 'get'
         if isinstance(result, str):
             print(f" -> [{idx+1}/{len(results)}] Warnung: Einzelnes Resultat ist ein String. Nutze Fallback-Mapping.")
             url = "https://en.wikipedia.org"
@@ -122,7 +119,6 @@ def run_pipeline(query: str):
         if html:
             text = extract_text(html)
         
-        # KORREKTUR 2: Der generische Web-Fallback. 
         if not text and ddg_snippet:
             print(f"    [!] Scraping blockiert/leer für {url}. Nutze DDG-Snippet als Fallback.")
             text = ddg_snippet
@@ -184,10 +180,8 @@ def run_pipeline(query: str):
     # 6. Build output
     if clusters:
         for i, cluster in enumerate(clusters):
-            # Semantic representative sentence (IMPORTANT STEP)
             representative = pick_representative_sentence(query, cluster)
 
-            # KORREKTUR 3: Robustes Labeling für das UI. 
             if representative and len(representative) < 90 and "youtube" not in representative.lower():
                 label = representative.strip()
             else:
@@ -196,6 +190,39 @@ def run_pipeline(query: str):
             output[label] = cluster[:3]
     
     print(f"[DEBUG 6/6] Pipeline beendet. Output-Keys: {list(output.keys())}")
-    print("=== ENDE PIPELINE-DEBUG ===\n")
+    
+    # =========================================================================
+    # NEU: ANBINDUNG AN DAS LLM (OPENAI CHAT COMPLETION)
+    # =========================================================================
+    print("[DEBUG] Transformiere Cluster in XML-Schema...")
+    xml_context = build_xml_context_from_clusters(output)
+    system_prompt = get_zero_assumption_prompt()
 
-    return output
+    # API-Key Überprüfung
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("[WARNUNG] Kein OPENAI_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
+        return "Fehler: OPENAI_API_KEY fehlt. Bitte im Terminal exportieren."
+
+    print("[DEBUG] Sende Daten und System-Prompt an OpenAI API...")
+    try:
+        client = OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Zuverlässiges, schnelles Modell für RAG-Extraktion
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Hier ist die Datenbasis:\n{xml_context}\n\nAntworte auf die Query: {query}"}
+            ],
+            temperature=0.1  # Niedrige Temperatur für extrem faktengetreue Antworten
+        )
+        
+        final_answer = response.choices[0].message.content
+        print("[DEBUG] LLM-Antwort erfolgreich generiert.")
+        print("=== ENDE PIPELINE-DEBUG ===\n")
+        return final_answer
+
+    except Exception as e:
+        print(f"[FEHLER] Fehler beim OpenAI-API-Aufruf: {str(e)}")
+        print("=== ENDE PIPELINE-DEBUG ===\n")
+        return f"Fehler bei der LLM-Generierung: {str(e)}"
