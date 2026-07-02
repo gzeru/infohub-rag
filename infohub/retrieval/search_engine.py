@@ -44,7 +44,7 @@ def search(query: str, max_results: int = 5):
             search_phrase = f"Ethiopia {search_phrase}"
 
     # 3. Initialize Tavily Client (Replace placeholder with your actual key if not using env vars)
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "DEIN_KOPIERTER_TAVILY_KEY_HIER")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
     client = TavilyClient(api_key=TAVILY_API_KEY)
 
     print(f"[DEBUG] Sende optimierte Query an Tavily API: '{search_phrase}'")
