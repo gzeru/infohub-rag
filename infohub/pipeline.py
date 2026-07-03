@@ -222,6 +222,13 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
         print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
         return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
 
+    # --- PIPELINE DEBUG INPUT LOGS ---
+    print("\n--- [PIPELINE DEBUG: LLM INPUTS] ---")
+    print(f"System Prompt Length: {len(system_prompt)} chars")
+    print(f"Language Compliance Target Section:\n{system_prompt[-350:]}")
+    print(f"User Query Evaluated: '{query}'")
+    print("------------------------------------\n")
+
     print("[DEBUG] Sende Daten und System-Prompt an die kostenlose Groq-API...")
     try:
         # Wir nutzen den universellen OpenAI-Client, leiten ihn aber zu Groq um
@@ -234,12 +241,25 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
             model="llama-3.3-70b-versatile",  # Dauerhaft kostenloses, extrem starkes Open-Source Modell
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Hier ist die Datenbasis:\n{xml_context}\n\nAntworte auf die Query: {query}"}
+                {
+                    "role": "user", 
+                    "content": f"DATA SET:\n{xml_context}\n\n"
+                               f"USER QUERY: {query}\n\n"
+                               f"CRITICAL OVERRIDE RULE: You must detect the language of the 'USER QUERY' string above. "
+                               f"If it is written in English, your entire final response MUST be formatted in English. "
+                               f"Do not switch or default to German under any circumstances."
+                }
             ],
             temperature=0.1  # Niedrige Temperatur für faktengetreue RAG-Antworten
         )
         
         final_answer = response.choices[0].message.content
+        
+        # --- PIPELINE DEBUG OUTPUT LOGS ---
+        print("\n--- [PIPELINE DEBUG: LLM OUTPUT] ---")
+        print(f"LLM Raw Engine Response:\n{final_answer}")
+        print("-------------------------------------\n")
+        
         print("[DEBUG] Kostenlose LLM-Antwort via Groq erfolgreich generiert.")
         print("=== ENDE PIPELINE-DEBUG ===\n")
         return final_answer
