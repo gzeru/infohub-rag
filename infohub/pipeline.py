@@ -203,37 +203,41 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     print(f"[DEBUG 6/6] Pipeline beendet. Output-Keys: {list(output.keys())}")
     
     # =========================================================================
-    # ANBINDUNG AN DAS LLM (OPENAI CHAT COMPLETION)
+    # ZU 100% KOSTENLOS: ANBINDUNG AN DIE GROQ API (OPENAI-KOMPATIBEL)
     # =========================================================================
     print("[DEBUG] Transformiere Cluster in XML-Schema...")
     xml_context = build_xml_context_from_clusters(output)
     system_prompt = get_zero_assumption_prompt()
 
-    # API-Key Überprüfung
-    api_key = os.getenv("OPENAI_API_KEY")
+    # API-Key Überprüfung für Groq
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("[WARNUNG] Kein OPENAI_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
-        return "Fehler: OPENAI_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
+        print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
+        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
 
-    print("[DEBUG] Sende Daten und System-Prompt an OpenAI API...")
+    print("[DEBUG] Sende Daten und System-Prompt an die kostenlose Groq-API...")
     try:
-        client = OpenAI(api_key=api_key)
+        # Wir nutzen den universellen OpenAI-Client, leiten ihn aber zu Groq um
+        client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.groq.com/openai/v1"
+        )
         
         response = client.chat.completions.create(
-            model="gpt-4o",  # Zuverlässiges, schnelles Modell für RAG-Extraktion
+            model="llama-3.3-70b-versatile",  # Dauerhaft kostenloses, extrem starkes Open-Source Modell
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Hier ist die Datenbasis:\n{xml_context}\n\nAntworte auf die Query: {query}"}
             ],
-            temperature=0.1  # Niedrige Temperatur für extrem faktengetreue Antworten
+            temperature=0.1  # Niedrige Temperatur für faktengetreue RAG-Antworten
         )
         
         final_answer = response.choices[0].message.content
-        print("[DEBUG] LLM-Antwort erfolgreich generiert.")
+        print("[DEBUG] Kostenlose LLM-Antwort via Groq erfolgreich generiert.")
         print("=== ENDE PIPELINE-DEBUG ===\n")
         return final_answer
 
     except Exception as e:
-        print(f"[FEHLER] Fehler beim OpenAI-API-Aufruf: {str(e)}")
+        print(f"[FEHLER] Fehler beim Groq-API-Aufruf: {str(e)}")
         print("=== ENDE PIPELINE-DEBUG ===\n")
-        return f"Fehler bei der LLM-Generierung: {str(e)}"
+        return f"Fehler bei der kostenlosen LLM-Generierung: {str(e)}"
