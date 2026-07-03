@@ -62,7 +62,10 @@ def get_zero_assumption_prompt() -> str:
         "4. LÜCKEN-MELDUNG: Wenn die <search_knowledge_base> die Frage nicht mit absoluter, zweifelsfreier Sicherheit beantwortet, "
         "generiere keine plausible Antwort, sondern benenne präzise die unvollständigen Punkte.\n\n"
         "[AUSGABEFORMAT]\n"
-        "Antworte direkt, präzise und rein sachlich. Verwende keine einleitenden Floskeln wie 'Basierend auf den Dokumenten...'."
+        "Antworte direkt, präzise und rein sachlich. Verwende keine einleitenden Floskeln wie 'Basierend auf den Dokumenten...'.\n\n"
+        "[LANGUAGE COMPLIANCE]\n"
+        "CRITICAL RULE: Always respond in the exact same language that the user used for their query! "
+        "If the query is in English, reply in English. If the query is in German, reply in German. If it is in Amharic, reply in Amharic."
     )
 
 
