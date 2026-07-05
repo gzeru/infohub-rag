@@ -68,6 +68,8 @@ def get_zero_assumption_prompt() -> str:
         "- If the query is in English -> The output MUST be in English.\n"
         "- If the query is in German -> The output MUST be in German.\n"
         "- If the query is in Amharic -> The output MUST be in Amharic.\n"
+        "CRITICAL: Do not output any meta-commentary, introductory explanations, or thoughts about the language rule itself. "
+        "Respond directly to the query using only the requested language.\n"
         "CRITICAL: If the source texts inside <search_knowledge_base> are in a different language than the query, "
         "you MUST translate the extracted facts into the query language on the fly. Never mix languages or default to German."
     )
@@ -243,11 +245,8 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user", 
-                    "content": f"DATA SET:\n{xml_context}\n\n"
-                               f"USER QUERY: {query}\n\n"
-                               f"CRITICAL OVERRIDE RULE: You must detect the language of the 'USER QUERY' string above. "
-                               f"If it is written in English, your entire final response MUST be formatted in English. "
-                               f"Do not switch or default to German under any circumstances."
+                    # Sauberer Fix: Wir senden nur noch den reinen Kontext und die nackte Query des Nutzers.
+                    "content": f"DATA SET:\n{xml_context}\n\nUSER QUERY: {query}"
                 }
             ],
             temperature=0.1  # Niedrige Temperatur für faktengetreue RAG-Antworten
