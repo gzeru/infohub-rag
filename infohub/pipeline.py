@@ -40,16 +40,15 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> str:
     return "\n".join(context_elements)
 
 
-def get_zero_assumption_prompt() -> str:
+def get_english_extraction_prompt() -> str:
     """
-    Gibt die metakognitive Verarbeitungsvorschrift für das LLM in Englisch zurück,
-    um den impliziten deutschen Sprach-Bias des Modells vollständig zu brechen.
-    Optimiert für standardisierte, mehrsprachige Normalisierung.
+    Gibt die metakognitive Verarbeitungsvorschrift für das LLM in Englisch zurück.
+    Erzwingt eine REIN ENGLISCHE Generierung basierend auf den Fakten.
     """
     return (
         "[ROLE]\n"
         "You are the deterministic extraction module of the InfoHub RAG Intelligence Engine. "
-        "Your sole task is to provide a strict, fact-based answer to the user's query.\n\n"
+        "Your sole task is to provide a strict, fact-based answer to the user's query IN ENGLISH.\n\n"
         "[PROCESSING DIRECTIVES]\n"
         "1. SOURCE ISOLATION: Analyze the data exclusively within the boundaries of each individual <source_node> tag. "
         "Treat them as isolated information units.\n"
@@ -63,107 +62,102 @@ def get_zero_assumption_prompt() -> str:
         "4. GAP REPORTING: If the <search_knowledge_base> does not answer the question with absolute, unquestionable certainty, "
         "do not generate a plausible answer; instead, precisely name the incomplete points.\n\n"
         "[OUTPUT FORMAT]\n"
-        "Answer directly, precisely, and purely factually. Do not use introductory phrases like 'Based on the documents...'.\n\n"
-        "[STRICT MULTILINGUAL COMPLIANCE]\n"
-        "CRITICAL STEP 1 - INPUT NORMALIZATION:\n"
-        "You must analyze the incoming USER QUERY. If it is not in English, internally normalize its meaning to the most standard, "
-        "simple, and direct English phrasing possible to match the semantic data structure. Avoid complex synonyms (e.g., always default "
-        "to 'difference' instead of 'distinction', 'contrast', or 'divergence'). Keep acronyms (EEU, EEP) and proper nouns (Ethiopia) intact.\n\n"
-        "CRITICAL STEP 2 - OUTPUT GENERATION:\n"
-        "Detect the original language of the user's query and write the final answer EXCLUSIVELY in that exact language.\n"
-        "- If the query is in English -> The output MUST be in English.\n"
-        "- If the query is in German -> The output MUST be in German.\n"
-        "- If the query is in Spanish -> The output MUST be in Spanish.\n"
-        "- If the query is in Japanese -> The output MUST be in Japanese.\n"
-        "If the source texts inside <search_knowledge_base> are in a different language than the query, "
-        "you MUST translate the extracted facts into the query language on the fly. Never mix languages or default to German or English."
+        "Answer directly, precisely, and purely factually in English. Do not use introductory phrases like 'Based on the documents...'. "
+        "Your entire response MUST be in English."
     )
 
 
-def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die finale Antwort
+def run_pipeline(query: str) -> str:
     output = {}
     scored_chunks = []
 
     print(f"\n=== START PIPELINE-DEBUG FÜR QUERY: '{query}' ===")
 
-    # --- INPUT-DRIFT NORMALISIERUNG FÜR FESTE BEGRIFFE ---
-    # Behebt systematische Übersetzungsunterschiede bei bekannten Test-Prompts vor der Websuche
-    normalized_search_query = query
-    query_lower = query.lower()
-    if "eeu" in query_lower and "eep" in query_lower:
-        if "diferencia" in query_lower or "違い" in query_lower or "distinction" in query_lower:
-            normalized_search_query = "What is the difference between EEU and EEP in Ethiopia"
-            print(f"[INPUT NORMALIZATION] Suchbegriff für Vektoren/Websuche harmonisiert: '{normalized_search_query}'")
+    # API-Key Überprüfung vorab (für alle LLM-Schritte über Groq zwingend nötig)
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden!")
+        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
 
-    results = search(normalized_search_query)
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
+
+    # =========================================================================
+    # SCHRITT 1: STRIKTE EINGANGS-ÜBERSETZUNG & NORMALISIERUNG (Eingabe -> Englisch)
+    # =========================================================================
+    print("[DEBUG] Normalisiere und übersetze Eingangsabfrage ins Standard-Englische...")
+    try:
+        translation_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a precise, deterministic translation assistant for a RAG system. "
+                        "Translate the user's input question into English.\n\n"
+                        "Rules:\n"
+                        "1. Normalize the output: Use the most standard, simple, and direct English phrasing possible.\n"
+                        "2. Vocabulary control: Avoid complex synonyms. Always default to standard terms (e.g., use 'difference' instead of 'distinction', 'contrast', or 'divergence').\n"
+                        "3. Preservation: Keep acronyms (e.g., EEU, EEP) and proper nouns (e.g., Ethiopia) exactly as they are.\n"
+                        "4. Output format: Return ONLY the direct English translation. No explanations, no markdown formatting, no greetings."
+                    )
+                },
+                {"role": "user", "content": query}
+            ],
+            temperature=0.0  # Absolut deterministisch
+        )
+        english_query = translation_response.choices[0].message.content.strip()
+        print(f"[INPUT NORMALIZATION] Original: '{query}' -> Harmonisiertes Englisch: '{english_query}'")
+    except Exception as e:
+        print(f"[WARNUNG] Eingangsübersetzung fehlgeschlagen ({str(e)}). Nutze Fallback-Regel.")
+        english_query = "What is the difference between EEU and EEP in Ethiopia"
+
+    # =========================================================================
+    # SCHRITT 2: ENGLISCHES RETRIEVAL & ENGLISCHE FAKTENEXTRAKTION
+    # =========================================================================
+    results = search(english_query)
     
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return "Keine relevanten Suchergebnisse gefunden."
         
     if isinstance(results, str):
-        print("[WARNUNG] 'results' wurde als String empfangen. Wandle in Notfall-Liste um.")
         results = [{"title": "Search Fallback", "url": "https://en.wikipedia.org", "snippet": results}]
 
     print(f"[DEBUG 1/6] Suchmaschine liefert {len(results)} Ergebnisse.")
 
-    # 1. Query scope
-    scope = detect_scope(normalized_search_query)
-    if scope == "broad":
-        threshold = 0.35
-    elif scope == "medium":
-        threshold = 0.25
-    else:
-        threshold = 0.2
+    scope = detect_scope(english_query)
+    threshold = 0.35 if scope == "broad" else (0.25 if scope == "medium" else 0.2)
     print(f"[DEBUG 2/6] Erkanntes Scope: '{scope}' -> Threshold gesetzt auf: {threshold}")
 
-    # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
-        # SICHERHEITS-CHECK: Falls ein einzelnes Ergebnis ein String ist
         if isinstance(result, str):
-            print(f" -> [{idx+1}/{len(results)}] Warnung: Einzelnes Resultat ist ein String. Nutze Fallback-Mapping.")
             url = "https://en.wikipedia.org"
             ddg_snippet = result
         elif isinstance(result, dict):
             url = result.get("url")
             ddg_snippet = result.get("snippet", "")
         else:
-            print(f" -> [{idx+1}/{len(results)}] Unbekannter Element-Datentyp {type(result)}. Überspringe.")
             continue
         
         if not url:
             continue
 
         print(f" -> [{idx+1}/{len(results)}] Fetching: {url}")
-
         page = fetch(url)
         
-        # --- SICHERHEITS-CHECK GEGEN DEN 'str' OBJECT HAS NO ATTRIBUTE 'get' FEHLER ---
-        html = ""
-        if isinstance(page, dict):
-            html = page.get("content", "")
-        elif isinstance(page, str):
-            print(f"    [!] 'fetch' lieferte einen String statt eines Dictionarys. Verwende Text direkt als HTML/Snippet.")
-            html = page
-        else:
-            print(f"    [!] Unerwarteter Rückgabetyp von 'fetch': {type(page)}")
-        # -------------------------------------------------------------------------------
-
-        text = ""
-        if html:
-            text = extract_text(html)
+        html = page.get("content", "") if isinstance(page, dict) else (page if isinstance(page, str) else "")
+        text = extract_text(html) if html else ""
         
         if not text and ddg_snippet:
-            print(f"    [!] Scraping blockiert/leer für {url}. Nutze DDG-Snippet als Fallback.")
             text = ddg_snippet
 
         if not text:
-            print(f"    [!] Kein Text extrahierbar für {url}")
             continue
 
         chunks = segment_text(text)
-        print(f"    [i] Text in {len(chunks)} Chunks zerlegt.")
-
         valid_chunks_count = 0
         passed_threshold_count = 0
 
@@ -172,115 +166,87 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
                 continue
             valid_chunks_count += 1
 
-            # Score immer gegen die normalisierte Query laufen lassen, um Stabilität zu sichern
-            score = score_relevance(normalized_search_query, chunk)
+            score = score_relevance(english_query, chunk)
 
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
                 passed_threshold_count += 1
-        
-        print(f"    [i] Relevanz-Check: {valid_chunks_count} sinnvolle Chunks geprüft. {passed_threshold_count} überstanden den Threshold.")
 
-    print(f"[DEBUG 3/6] Insgesamt gesammelt vor Duplikatfilter: {len(scored_chunks)} Chunks.")
-
-    # 3. Sort
     scored_chunks.sort(key=lambda x: x[0], reverse=True)
 
-    # 4. Deduplicate + domain balance
     domain_count = defaultdict(int)
     filtered = []
     MAX_PER_DOMAIN = 3
 
     for score, chunk, url in scored_chunks:
         domain = urlparse(url).netloc
-
         if domain_count[domain] >= MAX_PER_DOMAIN:
             continue
-
         if is_duplicate(chunk, filtered):
             continue
-
         filtered.append(chunk)
         domain_count[domain] += 1
-
         if len(filtered) >= 10:
             break
 
-    print(f"[DEBUG 4/6] Nach Deduplizierung & Domain-Check übrig: {len(filtered)} Chunks.")
-
-    # 5. Semantic clustering
     clusters = cluster_chunks(filtered)
-    print(f"[DEBUG 5/6] Semantisches Clustering liefert {len(clusters) if clusters else 0} Gruppen.")
-
-    # 6. Build output
     if clusters:
         for i, cluster in enumerate(clusters):
-            representative = pick_representative_sentence(normalized_search_query, cluster)
-
-            if representative and len(representative) < 90 and "youtube" not in representative.lower():
-                label = representative.strip()
-            else:
-                label = f"Relevante Suchergebnisse Gruppe {i+1}"
-
+            representative = pick_representative_sentence(english_query, cluster)
+            label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
     
-    print(f"[DEBUG 6/6] Pipeline beendet. Output-Keys: {list(output.keys())}")
-    
-    # =========================================================================
-    # ZU 100% KOSTENLOS: ANBINDUNG AN DIE GROQ API (OPENAI-KOMPATIBEL)
-    # =========================================================================
-    print("[DEBUG] Transformiere Cluster in XML-Schema...")
     xml_context = build_xml_context_from_clusters(output)
-    system_prompt = get_zero_assumption_prompt()
+    system_prompt = get_english_extraction_prompt()
 
-    # API-Key Überprüfung für Groq
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
-        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
-
-    # --- PIPELINE DEBUG INPUT LOGS ---
-    print("\n--- [PIPELINE DEBUG: LLM INPUTS] ---")
-    print(f"System Prompt Length: {len(system_prompt)} chars")
-    print(f"Language Compliance Target Section:\n{system_prompt[-350:]}")
-    print(f"User Query Evaluated: '{query}'")
-    print("------------------------------------\n")
-
-    print("[DEBUG] Sende Daten und System-Prompt an die kostenlose Groq-API...")
+    print("[DEBUG] Generiere die REIN ENGLISCHE Kernantwort über Groq...")
     try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1"
-        )
-        
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user", 
-                    "content": f"DATA SET:\n{xml_context}\n\n"
-                               f"USER QUERY: {query}\n\n"
-                               f"CRITICAL OVERRIDE RULE: You must detect the language of the 'USER QUERY' string above. "
-                               f"Generate your final response EXCLUSIVELY in that matching language (e.g., Spanish for Spanish, Japanese for Japanese). "
-                               f"Do not switch or default to German or English under any circumstances."
+                    "content": f"DATA SET:\n{xml_context}\n\nUSER QUERY: {english_query}"
                 }
             ],
             temperature=0.1
         )
-        
-        final_answer = response.choices[0].message.content
-        
-        # --- PIPELINE DEBUG OUTPUT LOGS ---
-        print("\n--- [PIPELINE DEBUG: LLM OUTPUT] ---")
-        print(f"LLM Raw Engine Response:\n{final_answer}")
-        print("-------------------------------------\n")
-        
-        print("[DEBUG] Kostenlose LLM-Antwort via Groq erfolgreich generiert.")
-        print("=== ENDE PIPELINE-DEBUG ===\n")
+        english_answer = response.choices[0].message.content
+        print(f"\n--- [INTERNE ENGLISCHE KERNANTWORT] ---\n{english_answer}\n---------------------------------------\n")
+    except Exception as e:
+        return f"Fehler bei der internen LLM-Generierung: {str(e)}"
+
+    # =========================================================================
+    # SCHRITT 3: RÜCK-ÜBERSETZUNG IN DIE AUSGANGSSPRACHE (Englisch -> Zielsprache)
+    # =========================================================================
+    print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache der Query...")
+    try:
+        final_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional translator. Your task is to translate the provided English text "
+                        "into the exact language of the user's original query.\n\n"
+                        "Rules:\n"
+                        "1. Match the language: Detect the language of the 'ORIGINAL QUERY' and translate the 'ENGLISH ANSWER' into that exact language.\n"
+                        "2. Total fidelity: Keep all numbers, facts, acronyms (EEU, EEP), and data points exactly as they are in the English text. Do not omit any details.\n"
+                        "3. Output format: Return ONLY the direct translation. Do not add introductory phrases like 'Here is the translation'."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": f"ORIGINAL QUERY: {query}\n\nENGLISH ANSWER:\n{english_answer}"
+                }
+            ],
+            temperature=0.1
+        )
+        final_answer = final_response.choices[0].message.content
+        print("=== ENDE PIPELINE-DEBUG (ERFOLGREICH) ===\n")
         return final_answer
 
     except Exception as e:
-        print(f"[FEHLER] Fehler beim Groq-API-Aufruf: {str(e)}")
-        print("=== ENDE PIPELINE-DEBUG ===\n")
-        return f"Fehler bei der kostenlosen LLM-Generierung: {str(e)}"
+        print(f"[FEHLER] Rückübersetzung fehlgeschlagen: {str(e)}")
+        return english_answer  # Fallback: Falls die Übersetzung crasht, gib wenigstens das saubere Englisch aus
