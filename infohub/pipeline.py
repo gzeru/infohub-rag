@@ -42,8 +42,8 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> str:
 
 def get_zero_assumption_prompt() -> str:
     """
-    Gibt die metakognitive Verarbeitungsvorschrift für das LLM in Englisch zurück,
-    um den impliziten deutschen Sprach-Bias des Modells vollständig zu brechen.
+    Gibt die metakognitive Verarbeitungsvorschrift für das LLM in Englisch zurück.
+    Funktioniert vollkommen sprachunabhängig für jede Sprache weltweit.
     """
     return (
         "[ROLE]\n"
@@ -63,15 +63,16 @@ def get_zero_assumption_prompt() -> str:
         "do not generate a plausible answer; instead, precisely name the incomplete points.\n\n"
         "[OUTPUT FORMAT]\n"
         "Answer directly, precisely, and purely factually. Do not use introductory phrases like 'Based on the documents...'.\n\n"
-        "[STRICT LANGUAGE COMPLIANCE]\n"
-        "CRITICAL: You must detect the language of the user's query and write the final answer EXCLUSIVELY in that exact language.\n"
-        "- If the query is in English -> The output MUST be in English.\n"
-        "- If the query is in German -> The output MUST be in German.\n"
-        "- If the query is in Amharic -> The output MUST be in Amharic.\n"
-        "CRITICAL: Do not output any meta-commentary, introductory explanations, or thoughts about the language rule itself. "
-        "Respond directly to the query using only the requested language.\n"
-        "CRITICAL: If the source texts inside <search_knowledge_base> are in a different language than the query, "
-        "you MUST translate the extracted facts into the query language on the fly. Never mix languages or default to German."
+        "[STRICT ZERO-BIAS LANGUAGE COMPLIANCE]\n"
+        "CRITICAL: You must automatically detect the exact language of the user's query.\n"
+        "The final response MUST be written exclusively in that identical language. Never switch back to English, German, or any other language unless the query itself was written in it.\n"
+        "CRITICAL: Do not output any meta-commentary, introductory explanations, or thoughts about this language mirror rule itself. Start directly with the translated fact extraction.\n\n"
+        "[UNIVERSAL LINGUISTIC REFINEMENT]\n"
+        "CRITICAL: When responding in the detected target language, you are strictly forbidden from "
+        "simply transliterating English technical terms or entities phonetically into the target language's alphabet, script, or sounds.\n"
+        "Instead, you MUST perform a full semantic translation. Translate the actual underlying meaning "
+        "into the native, culturally authentic, and professionally accepted vocabulary of the target language.\n"
+        "The terminology must read naturally to a native speaker and industry professional of that specific language."
     )
 
 
@@ -94,7 +95,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     )
 
     # =========================================================================
-    # UNIVERSAL TRANSLATION LAYER (ENGLISH PIVOT)
+    # UNIVERSAL TRANSLATION LAYER (PRECISE ENGLISH PIVOT)
     # =========================================================================
     print("[DEBUG] Übersetze Suchanfrage universell ins Englische für maximalen Datenertrag...")
     try:
@@ -103,11 +104,18 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
             messages=[
                 {
                     "role": "system", 
-                    "content": "You are a precise translation module. Translate the user's search query into optimized English for a web search engine. Output ONLY the raw English translation, nothing else. No explanations, no quotes."
+                    "content": (
+                        "You are a strict cross-lingual semantic translation engine.\n"
+                        "Your job is to translate the user's input into clear, grammatically correct English "
+                        "while preserving the exact meaning of technical terms, institutional roles, and entities.\n"
+                        "CRITICAL: Do not summarize, do not omit facts, and do not try to guess search keywords. "
+                        "Provide a direct, high-fidelity translation so the semantic meaning remains 100% identical.\n"
+                        "Output ONLY the raw English translation. No quotes, no explanations."
+                    )
                 },
                 {"role": "user", "content": query}
             ],
-            temperature=0.0  # Maximale Stabilität ohne kreativen Spielraum
+            temperature=0.0  # Absolute Konstanz erzwingen
         )
         search_query = translation_response.choices[0].message.content.strip()
         print(f"[DEBUG] Original Query: '{query}' -> Engine Search Query: '{search_query}'")
@@ -174,7 +182,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
             text = extract_text(html)
         
         if not text and ddg_snippet:
-            print(f"    [!] Scraping blockiert/leer für {url}. Nutze DDG-Snippet als Fallback.")
+            print(f"    [!] Scraping blockiert/leer for {url}. Nutze DDG-Snippet als Fallback.")
             text = ddg_snippet
 
         if not text:
