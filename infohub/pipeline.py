@@ -81,9 +81,46 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
     print(f"\n=== START PIPELINE-DEBUG FÜR QUERY: '{query}' ===")
 
-    results = search(query)
+    # API-Key Überprüfung für Groq vorab ausführen
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
+        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
+
+    # Initialisierung des universellen Clients (wird für Übersetzung und finale Generierung genutzt)
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
+
+    # =========================================================================
+    # UNIVERSAL TRANSLATION LAYER (ENGLISH PIVOT)
+    # =========================================================================
+    print("[DEBUG] Übersetze Suchanfrage universell ins Englische für maximalen Datenertrag...")
+    try:
+        translation_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You are a precise translation module. Translate the user's search query into optimized English for a web search engine. Output ONLY the raw English translation, nothing else. No explanations, no quotes."
+                },
+                {"role": "user", "content": query}
+            ],
+            temperature=0.0  # Maximale Stabilität ohne kreativen Spielraum
+        )
+        search_query = translation_response.choices[0].message.content.strip()
+        print(f"[DEBUG] Original Query: '{query}' -> Engine Search Query: '{search_query}'")
+    except Exception as e:
+        print(f"[WARNUNG] Übersetzung fehlgeschlagen, nutze Original-Query als Fallback: {str(e)}")
+        search_query = query
+
+    # =========================================================================
+    # EXTENSION: WEB RETRIEVAL MIT DER ENGLISCHEN QUERY
+    # =========================================================================
+    results = search(search_query)
     
-    if not results:
+    if not map and not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return "Keine relevanten Suchergebnisse gefunden."
         
@@ -93,8 +130,8 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
     print(f"[DEBUG 1/6] Suchmaschine liefert {len(results)} Ergebnisse.")
 
-    # 1. Query scope
-    scope = detect_scope(query)
+    # 1. Query scope (wird anhand der englischen Suchphrase gemessen)
+    scope = detect_scope(search_query)
     if scope == "broad":
         threshold = 0.35
     elif scope == "medium":
@@ -105,7 +142,6 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
     # 2. Fetch + extract + chunk + score
     for idx, result in enumerate(results):
-        # SICHERHEITS-CHECK: Falls ein einzelnes Ergebnis ein String ist
         if isinstance(result, str):
             print(f" -> [{idx+1}/{len(results)}] Warnung: Einzelnes Resultat ist ein String. Nutze Fallback-Mapping.")
             url = "https://en.wikipedia.org"
@@ -124,16 +160,14 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
         page = fetch(url)
         
-        # --- SICHERHEITS-CHECK GEGEN DEN 'str' OBJECT HAS NO ATTRIBUTE 'get' FEHLER ---
         html = ""
         if isinstance(page, dict):
             html = page.get("content", "")
         elif isinstance(page, str):
-            print(f"    [!] 'fetch' lieferte einen String statt eines Dictionarys. Verwende Text direkt als HTML/Snippet.")
+            print(f"    [!] 'fetch' lieferte einen String statt eines Dictionarys. Verwende Text direkt.")
             html = page
         else:
             print(f"    [!] Unerwarteter Rückgabetyp von 'fetch': {type(page)}")
-        # -------------------------------------------------------------------------------
 
         text = ""
         if html:
@@ -158,7 +192,8 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
                 continue
             valid_chunks_count += 1
 
-            score = score_relevance(query, chunk)
+            # WICHTIG: Wir matchen den englischen Text der Webseiten gegen das englische Such-Query
+            score = score_relevance(search_query, chunk)
 
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
@@ -200,7 +235,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     # 6. Build output
     if clusters:
         for i, cluster in enumerate(clusters):
-            representative = pick_representative_sentence(query, cluster)
+            representative = pick_representative_sentence(search_query, cluster)
 
             if representative and len(representative) < 90 and "youtube" not in representative.lower():
                 label = representative.strip()
@@ -212,17 +247,11 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     print(f"[DEBUG 6/6] Pipeline beendet. Output-Keys: {list(output.keys())}")
     
     # =========================================================================
-    # ZU 100% KOSTENLOS: ANBINDUNG AN DIE GROQ API (OPENAI-KOMPATIBEL)
+    # WISSENS-EXTRAKTION VIA GROQ API
     # =========================================================================
     print("[DEBUG] Transformiere Cluster in XML-Schema...")
     xml_context = build_xml_context_from_clusters(output)
     system_prompt = get_zero_assumption_prompt()
-
-    # API-Key Überprüfung für Groq
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden! Breche vor LLM-Call ab.")
-        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
 
     # --- PIPELINE DEBUG INPUT LOGS ---
     print("\n--- [PIPELINE DEBUG: LLM INPUTS] ---")
@@ -233,23 +262,18 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
 
     print("[DEBUG] Sende Daten und System-Prompt an die kostenlose Groq-API...")
     try:
-        # Wir nutzen den universellen OpenAI-Client, leiten ihn aber zu Groq um
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.groq.com/openai/v1"
-        )
-        
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # Dauerhaft kostenloses, extrem starkes Open-Source Modell
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {
                     "role": "user", 
-                    # Sauberer Fix: Wir senden nur noch den reinen Kontext und die nackte Query des Nutzers.
+                    # Die originale Query des Nutzers bleibt hier bestehen,
+                    # damit das Modell weiß, in welcher Sprache es antworten muss!
                     "content": f"DATA SET:\n{xml_context}\n\nUSER QUERY: {query}"
                 }
             ],
-            temperature=0.1  # Niedrige Temperatur für faktengetreue RAG-Antworten
+            temperature=0.1
         )
         
         final_answer = response.choices[0].message.content
