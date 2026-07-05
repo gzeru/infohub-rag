@@ -120,7 +120,7 @@ def run_pipeline(query: str) -> str:  # Rückgabetyp geändert zu str für die f
     # =========================================================================
     results = search(search_query)
     
-    if not map and not results:
+    if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return "Keine relevanten Suchergebnisse gefunden."
         
