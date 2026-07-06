@@ -13,7 +13,6 @@ def optimize_query_generically(raw_query: str) -> str:
     clean_query = raw_query.lower()
 
     # Remove conversational phrases and filler words across English and German
-    # Added word boundaries to 'work' and 'works' to prevent mangling words like 'network'
     fillers = [
         r"\bhow does\b", r"\bwhy is\b", r"\bwhat is\b", r"\bplease tell me about\b",
         r"\bworks\b", r"\bwork\b", r"\bexplain\b", r"\bshow me\b", r"\bthe\b",
@@ -33,18 +32,13 @@ def optimize_query_generically(raw_query: str) -> str:
 
 def search(query: str, max_results: int = 2) -> list:
     """
-    Optimizes the incoming query and retrieves clean search results
-    as a raw list of dictionaries using the Tavily API platform.
+    Vollkommen generisch: Optimiert die Abfrage und holt Suchergebnisse
+    als Liste von Dictionaries über die Tavily API.
     """
-    # 1. Clean the incoming query using your existing function
+    # 1. Clean the incoming query
     search_phrase = optimize_query_generically(query)
     
-    # 2. Add geographic context automatically for infrastructure abbreviations
-    if "eeu" in search_phrase or "eep" in search_phrase:
-        if "ethiopia" not in search_phrase:
-            search_phrase = f"Ethiopia {search_phrase}"
-
-    # 3. Initialize Tavily Client
+    # 2. Initialize Tavily Client
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
     client = TavilyClient(api_key=TAVILY_API_KEY)
 
@@ -52,7 +46,6 @@ def search(query: str, max_results: int = 2) -> list:
     
     raw_mapped_results = []
     try:
-        # Abruf über Tavily
         response = client.search(
             query=search_phrase, 
             search_depth="basic", 
@@ -64,9 +57,9 @@ def search(query: str, max_results: int = 2) -> list:
         for item in raw_results:
             url = item.get("url", "")
             
-            # Wikipedia Desktop-Normalisierung beibehalten
-            if "en.m.wikipedia.org" in url:
-                url = url.replace("en.m.wikipedia.org", "en.wikipedia.org")
+            # Wikipedia Desktop-Normalisierung (generisch für alle Sprachen)
+            if ".m.wikipedia.org" in url:
+                url = url.replace(".m.wikipedia.org", ".wikipedia.org")
                 
             raw_mapped_results.append({
                 "title": item.get("title", ""),
@@ -75,8 +68,6 @@ def search(query: str, max_results: int = 2) -> list:
             })
             
         print(f"[DEBUG] API-Abruf erfolgreich! {len(raw_mapped_results)} Ergebnisse geladen.")
-        
-        # JETZT KORREKT: Direkte Rückgabe der Rohdaten-Liste für die Pipeline
         return raw_mapped_results
 
     except Exception as e:
@@ -86,25 +77,16 @@ def search(query: str, max_results: int = 2) -> list:
 
 def search_images(query: str, max_results: int = 3) -> list:
     """
-    KORRIGIERT & GENERISCH: Nutzt Tavily, um relevante Bilder zu finden.
-    Gibt anstelle von reinen Strings eine Liste von strukturierten Dictionaries zurück,
-    die sowohl die Bild-URL als auch die dazugehörige Website-Quelle enthalten.
-    
-    Format: [{"image_url": "...", "source_url": "...", "title": "..."}, ...]
+    Vollkommen generisch: Sucht nach Bildern und verknüpft sie dynamisch mit den 
+    Quell-Websites, ohne jegliche feste Filter oder länderspezifische Begriffe.
     """
     search_phrase = optimize_query_generically(query)
-    
-    # Geografischen Kontext mitsenden, falls nötig
-    if "eeu" in search_phrase or "eep" in search_phrase:
-        if "ethiopia" not in search_phrase:
-            search_phrase = f"Ethiopia {search_phrase}"
             
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
     client = TavilyClient(api_key=TAVILY_API_KEY)
     
     structured_images = []
     try:
-        # Tavily Suche mit Bildern UND Web-Resultaten aufrufen
         response = client.search(
             query=search_phrase,
             search_depth="basic",
@@ -116,25 +98,22 @@ def search_images(query: str, max_results: int = 3) -> list:
         web_results = response.get("results", [])
         
         for idx, img in enumerate(raw_images):
-            # Fallunterscheidung: Tavily kann Bilder als Dicts oder rohe Strings liefern
             if isinstance(img, dict):
                 img_url = img.get("url")
                 img_title = img.get("description", "Image Reference")
             else:
-                img_url = img
+                img_url = str(img)
                 img_title = "Image Reference"
                 
-            if not img_url or not str(img_url).startswith("http"):
+            if not img_url or not img_url.startswith("http"):
                 continue
 
-            # Dynamisches Mapping der Quell-Website:
-            # Wir versuchen das Bild mit dem gleichindizierten Web-Resultat zu verknüpfen
-            if idx < len(web_results):
+            # Generische Zuordnung der Quelle: Verknüpfung mit dem Web-Resultat über den Index
+            if idx < len(web_results) and isinstance(web_results[idx], dict):
                 source_url = web_results[idx].get("url", img_url)
-                if not img_title or img_title == "Image Reference":
+                if img_title == "Image Reference":
                     img_title = web_results[idx].get("title", "Image Reference")
             else:
-                # Fallback: Wenn keine Web-Resultate mehr da sind, nutzen wir das Bild selbst als Quelle
                 source_url = img_url
             
             structured_images.append({
