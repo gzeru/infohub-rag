@@ -1,5 +1,6 @@
 import os
 import sys
+import html  # Hinzugefügt für sicheres XML-Escaping
 from urllib.parse import urlparse
 from collections import defaultdict
 from openai import OpenAI
@@ -22,14 +23,11 @@ from infohub.processing.semantic_labeling import pick_representative_sentence
 def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
     """
     Abstrakte Kapselungsebene: Transformiert semantische Text-Cluster in ein
-    striktes XML-Schema, um syntaktische Barrieren für den Attention-Mechanismus
-    des LLMs zu errichten. Verhindert die Verschmelzung von Attributen über Clustergrenzen hinweg.
-    
-    ZUSATZ: Extrahiert parallel die erste verfügbare Bildquelle aus den Chunks für das Frontend.
-    Returns: (xml_context_string, image_url, image_caption)
+    striktes XML-Schema. Escaped Sonderzeichen, um syntaktische Barrieren für 
+    den Attention-Mechanismus des LLMs sauber aufrechtzuerhalten.
     """
     if not pipeline_output:
-        return "<search_knowledge_base>\n  \n</search_knowledge_base>", None, None
+        return "<search_knowledge_base>\n</search_knowledge_base>", None, None
 
     context_elements = ["<search_knowledge_base>"]
     found_image = None
@@ -37,6 +35,9 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
     
     node_id = 1
     for label, chunks in pipeline_output.items():
+        # Label für XML-Kontext absichern
+        safe_label = html.escape(str(label).strip())
+        
         for chunk in chunks:
             if hasattr(chunk, 'page_content'):
                 clean_chunk = chunk.page_content.strip()
@@ -46,9 +47,12 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
             else:
                 clean_chunk = chunk.strip() if isinstance(chunk, str) else str(chunk).strip()
 
+            # Kritischer Fix: Text-Inhalt XML-konform escapen
+            safe_chunk = html.escape(clean_chunk)
+
             context_elements.append(f'  <source_node id="{node_id}">')
-            context_elements.append(f"    <semantic_context>{label}</semantic_context>")
-            context_elements.append(f"    <raw_fact_stream>\n{clean_chunk}\n    </raw_fact_stream>")
+            context_elements.append(f"    <semantic_context>{safe_label}</semantic_context>")
+            context_elements.append(f"    <raw_fact_stream>\n{safe_chunk}\n    </raw_fact_stream>")
             context_elements.append(f"  </source_node>")
             node_id += 1
         
@@ -57,10 +61,7 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
 
 
 def get_english_extraction_prompt() -> str:
-    """
-    Gibt die metakognitive Verarbeitungsvorschrift für das LLM in Englisch zurück.
-    Erzwingt eine REIN ENGLISCHE Generierung basierend auf den Fakten.
-    """
+    """Gibt die metakognitive Verarbeitungsvorschrift für das LLM zurück."""
     return (
         "[ROLE]\n"
         "You are the deterministic extraction module of the InfoHub RAG Intelligence Engine. "
@@ -84,11 +85,7 @@ def get_english_extraction_prompt() -> str:
 
 
 def run_pipeline(query: str) -> dict:
-    """
-    Hauptpipeline der InfoHub RAG Engine.
-    Übersetzt fremdsprachige Anfragen, führt das semantische Web-Retrieval aus,
-    extrahiert die Kernantwort und übersetzt das Ergebnis zurück in die Ausgangssprache.
-    """
+    """Hauptpipeline der InfoHub RAG Engine."""
     output = {}
     scored_chunks = []
 
@@ -110,7 +107,7 @@ def run_pipeline(query: str) -> dict:
     )
 
     # =========================================================================
-    # SCHRITT 1: ERWEITERTE & GEHÄRTETE EINGANGS-ÜBERSETZUNG (Amharisch -> Englisch)
+    # SCHRITT 1: EINGANGS-ÜBERSETZUNG (Erzwingung technischer Kontexte)
     # =========================================================================
     print("[DEBUG] Normalisiere und übersetze Eingangsabfrage ins Standard-Englische...")
     try:
@@ -128,7 +125,7 @@ def run_pipeline(query: str) -> dict:
                         "3. Preserve acronyms (EEU, EEP) and proper nouns (Ethiopia) as they are.\n"
                         "4. Output ONLY the raw English translation. No explanations, no markdown, no conversational text.\n\n"
                         "TECHNICAL DICTIONARY EXAMPLES:\n"
-                        "- 'የቀለበት መቁረጫ መሳርያ አሳየኝ' -> 'Show me a ring cutting tool'\n"
+                        "- 'የቀለበት መቁረጫ መሳርያ אሳየኝ' -> 'Show me a ring cutting tool'\n"
                         "- 'የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Hand ring cutter tool'\n"
                         "- 'የኤሌክትሪክ የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Electric hand ring cutting tool'\n"
                         "- 'የኢትዮጵያ ኤሌክትሪክ አገልግሎት' -> 'Ethiopian Electric Utility'\n"
@@ -146,7 +143,7 @@ def run_pipeline(query: str) -> dict:
         english_query = query
 
     # =========================================================================
-    # SCHRITT 2: ENGLISCHES RETRIEVAL & ENGLISCHE FAKTENEXTRAKTION
+    # SCHRITT 2: RETRIEVAL & FAKTENEXTRAKTION
     # =========================================================================
     results = search(english_query)
     
@@ -182,10 +179,16 @@ def run_pipeline(query: str) -> dict:
             continue
 
         print(f" -> [{idx+1}/{len(results)}] Fetching: {url}")
-        page = fetch(url)
         
-        html = page.get("content", "") if isinstance(page, dict) else (page if isinstance(page, str) else "")
-        text = extract_text(html) if html else ""
+        try:
+            page = fetch(url)
+            if not page:
+                raise ValueError("Empty response from fetcher")
+            html_content = page.get("content", "") if isinstance(page, dict) else (page if isinstance(page, str) else "")
+            text = extract_text(html_content) if html_content else ""
+        except Exception as fetch_err:
+            print(f"    [FETCH-FEHLER] Überspringe {url} aufgrund von: {str(fetch_err)}")
+            text = ""
         
         if not text and ddg_snippet:
             text = ddg_snippet
@@ -199,7 +202,6 @@ def run_pipeline(query: str) -> dict:
                 continue
 
             score = score_relevance(english_query, chunk)
-
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
 
@@ -254,7 +256,7 @@ def run_pipeline(query: str) -> dict:
         }
 
     # =========================================================================
-    # SCHRITT 3: RÜCK-ÜBERSETZUNG IN DIE AUSGANGSSPRACHE (Englisch -> Zielsprache)
+    # SCHRITT 3: RÜCK-ÜBERSETZUNG (Mit striktem Erhalt von Fachbegriffen)
     # =========================================================================
     print("[DEBUG] Überprüfe Quellsprache für Rückübersetzung...")
     try:
@@ -284,7 +286,7 @@ def run_pipeline(query: str) -> dict:
             "caption": found_caption
         }
 
-    print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache der Query...")
+    print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache...")
     try:
         final_response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -297,7 +299,7 @@ def run_pipeline(query: str) -> dict:
                         "Rules:\n"
                         "1. Match the language: Detect the language of the 'ORIGINAL QUERY' and translate the 'ENGLISH ANSWER' into that exact language.\n"
                         "2. Total fidelity: Keep all numbers, facts, acronyms (EEU, EEP), and data points exactly as they are in the English text. Do not omit any details.\n"
-                        "3. Output format: Return ONLY the direct translation. Do not add introductory phrases like 'Here is the translation'."
+                        "3. Output format: Return ONLY the direct translation. Do not add introductory phrases."
                     )
                 },
                 {
