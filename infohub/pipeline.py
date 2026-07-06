@@ -1,3 +1,12 @@
+import os
+import sys
+from urllib.parse import urlparse
+from collections import defaultdict
+from openai import OpenAI
+
+# Sicherstellung der relativen Pfadstrukturen innerhalb der InfoHub-Architektur
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from infohub.retrieval.search_engine import search
 from infohub.retrieval.fetcher import fetch
 from infohub.processing.text_extractor import extract_text
@@ -8,11 +17,6 @@ from infohub.processing.dedupe import is_duplicate
 from infohub.core.query_scope import detect_scope
 from infohub.processing.semantic_clustering import cluster_chunks
 from infohub.processing.semantic_labeling import pick_representative_sentence
-
-from urllib.parse import urlparse
-from collections import defaultdict
-import os
-from openai import OpenAI  # OpenAI-Bibliothek importiert
 
 
 def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
@@ -34,7 +38,6 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
     node_id = 1
     for label, chunks in pipeline_output.items():
         for chunk in chunks:
-            # Check, ob der Chunk Metadaten besitzt (z.B. bei erweiterten Objekten)
             if hasattr(chunk, 'page_content'):
                 clean_chunk = chunk.page_content.strip()
                 if hasattr(chunk, 'metadata') and "image_url" in chunk.metadata and not found_image:
@@ -83,14 +86,14 @@ def get_english_extraction_prompt() -> str:
 def run_pipeline(query: str) -> dict:
     """
     Hauptpipeline der InfoHub RAG Engine.
-    Gibt jetzt strukturiert ein Dictionary mit Antworttext und visuellen Links zurück.
+    Übersetzt fremdsprachige Anfragen, führt das semantische Web-Retrieval aus,
+    extrahiert die Kernantwort und übersetzt das Ergebnis zurück in die Ausgangssprache.
     """
     output = {}
     scored_chunks = []
 
     print(f"\n=== START PIPELINE-DEBUG FÜR QUERY: '{query}' ===")
 
-    # API-Key Überprüfung vorab (Fehlerpfad angepasst auf Dictionary)
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden!")
@@ -107,7 +110,7 @@ def run_pipeline(query: str) -> dict:
     )
 
     # =========================================================================
-    # SCHRITT 1: STRIKTE EINGANGS-ÜBERSETZUNG & NORMALISIERUNG (Eingabe -> Englisch)
+    # SCHRITT 1: ERWEITERTE & GEHÄRTETE EINGANGS-ÜBERSETZUNG (Amharisch -> Englisch)
     # =========================================================================
     print("[DEBUG] Normalisiere und übersetze Eingangsabfrage ins Standard-Englische...")
     try:
@@ -117,31 +120,36 @@ def run_pipeline(query: str) -> dict:
                 {
                     "role": "system",
                     "content": (
-                        "You are a precise, deterministic translation assistant for a RAG system. "
-                        "Translate the user's input question into English.\n\n"
-                        "Rules:\n"
-                        "1. Normalize the output: Use the most standard, simple, and direct English phrasing possible.\n"
-                        "2. Vocabulary control: Avoid complex synonyms. Always default to standard terms (e.g., use 'difference' instead of 'distinction', 'contrast', or 'divergence').\n"
-                        "3. Preservation: Keep acronyms (e.g., EEU, EEP) and proper nouns (e.g., Ethiopia) exactly as they are.\n"
-                        "4. Output format: Return ONLY the direct English translation. No explanations, no markdown formatting, no greetings."
+                        "You are a strict, precise technical translator for an AI search engine.\n"
+                        "Your sole task is to translate user queries from any language (especially Amharic) into clear, concise, standard English.\n\n"
+                        "CRITICAL INSTRUCTIONS:\n"
+                        "1. Never invent metaphors or poetic stories. (e.g., Never translate ring cutting tools as 'keys and locks').\n"
+                        "2. Maintain technical and industrial contexts. Focus on tools, devices, utilities, and engineering terms.\n"
+                        "3. Preserve acronyms (EEU, EEP) and proper nouns (Ethiopia) as they are.\n"
+                        "4. Output ONLY the raw English translation. No explanations, no markdown, no conversational text.\n\n"
+                        "TECHNICAL DICTIONARY EXAMPLES:\n"
+                        "- 'የቀለበት መቁረጫ መሳርያ አሳየኝ' -> 'Show me a ring cutting tool'\n"
+                        "- 'የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Hand ring cutter tool'\n"
+                        "- 'የኤሌክትሪክ የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Electric hand ring cutting tool'\n"
+                        "- 'የኢትዮጵያ ኤሌክትሪክ አገልግሎት' -> 'Ethiopian Electric Utility'\n"
+                        "- 'የኢትዮጵያ ኤሌክትሪክ ኃይል' -> 'Ethiopian Electric Power'"
                     )
                 },
                 {"role": "user", "content": query}
             ],
-            temperature=0.0  # Absolut deterministisch
+            temperature=0.0
         )
         english_query = translation_response.choices[0].message.content.strip()
         print(f"[INPUT NORMALIZATION] Original: '{query}' -> Harmonisiertes Englisch: '{english_query}'")
     except Exception as e:
         print(f"[WARNUNG] Eingangsübersetzung fehlgeschlagen ({str(e)}). Nutze Fallback-Regel.")
-        english_query = "What is the difference between EEU and EEP in Ethiopia"
+        english_query = query
 
     # =========================================================================
     # SCHRITT 2: ENGLISCHES RETRIEVAL & ENGLISCHE FAKTENEXTRAKTION
     # =========================================================================
     results = search(english_query)
     
-    # Abbruchpfad angepasst auf Dictionary
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return {
@@ -219,7 +227,6 @@ def run_pipeline(query: str) -> dict:
             label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
     
-    # Bild-Rückgaben extrahieren
     xml_context, found_image, found_caption = build_xml_context_from_clusters(output)
     system_prompt = get_english_extraction_prompt()
 
@@ -239,7 +246,6 @@ def run_pipeline(query: str) -> dict:
         english_answer = response.choices[0].message.content
         print(f"\n--- [INTERNE ENGLISCHE KERNANTWORT] ---\n{english_answer}\n---------------------------------------\n")
     except Exception as e:
-        # Fehlerpfad angepasst auf Dictionary
         return {
             "answer": f"Fehler bei der internen LLM-Generierung: {str(e)}",
             "has_image": False,
@@ -250,9 +256,6 @@ def run_pipeline(query: str) -> dict:
     # =========================================================================
     # SCHRITT 3: RÜCK-ÜBERSETZUNG IN DIE AUSGANGSSPRACHE (Englisch -> Zielsprache)
     # =========================================================================
-    
-    # NEU: Überprüfe deterministisch, ob die ursprüngliche Quellabfrage bereits Englisch war.
-    # Wenn ja, umgehen wir die Rückübersetzung komplett, um Sprachverzerrungen zu verhindern.
     print("[DEBUG] Überprüfe Quellsprache für Rückübersetzung...")
     try:
         lang_check_response = client.chat.completions.create(
@@ -281,7 +284,6 @@ def run_pipeline(query: str) -> dict:
             "caption": found_caption
         }
 
-    # Fortfahren mit Rückübersetzung für Nicht-Englische Sprachen
     print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache der Query...")
     try:
         final_response = client.chat.completions.create(
