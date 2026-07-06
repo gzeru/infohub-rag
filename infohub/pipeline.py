@@ -15,21 +15,34 @@ import os
 from openai import OpenAI  # OpenAI-Bibliothek importiert
 
 
-def build_xml_context_from_clusters(pipeline_output: dict) -> str:
+def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
     """
     Abstrakte Kapselungsebene: Transformiert semantische Text-Cluster in ein
     striktes XML-Schema, um syntaktische Barrieren für den Attention-Mechanismus
     des LLMs zu errichten. Verhindert die Verschmelzung von Attributen über Clustergrenzen hinweg.
+    
+    ZUSATZ: Extrahiert parallel die erste verfügbare Bildquelle aus den Chunks für das Frontend.
+    Returns: (xml_context_string, image_url, image_caption)
     """
     if not pipeline_output:
-        return "<search_knowledge_base>\n  <!-- Keine relevanten Daten gefunden -->\n</search_knowledge_base>"
+        return "<search_knowledge_base>\n  <!-- Keine relevanten Daten gefunden -->\n</search_knowledge_base>", None, None
 
     context_elements = ["<search_knowledge_base>"]
+    found_image = None
+    found_caption = None
     
     node_id = 1
     for label, chunks in pipeline_output.items():
         for chunk in chunks:
-            clean_chunk = chunk.strip() if isinstance(chunk, str) else str(chunk).strip()
+            # Check, ob der Chunk Metadaten besitzt (z.B. bei erweiterten Objekten)
+            if hasattr(chunk, 'page_content'):
+                clean_chunk = chunk.page_content.strip()
+                if hasattr(chunk, 'metadata') and "image_url" in chunk.metadata and not found_image:
+                    found_image = chunk.metadata["image_url"]
+                    found_caption = chunk.metadata.get("image_caption", label)
+            else:
+                clean_chunk = chunk.strip() if isinstance(chunk, str) else str(chunk).strip()
+
             context_elements.append(f'  <source_node id="{node_id}">')
             context_elements.append(f"    <semantic_context>{label}</semantic_context>")
             context_elements.append(f"    <raw_fact_stream>\n{clean_chunk}\n    </raw_fact_stream>")
@@ -37,7 +50,7 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> str:
             node_id += 1
         
     context_elements.append("</search_knowledge_base>")
-    return "\n".join(context_elements)
+    return "\n".join(context_elements), found_image, found_caption
 
 
 def get_english_extraction_prompt() -> str:
@@ -67,7 +80,11 @@ def get_english_extraction_prompt() -> str:
     )
 
 
-def run_pipeline(query: str) -> str:
+def run_pipeline(query: str) -> dict:
+    """
+    Hauptpipeline der InfoHub RAG Engine.
+    Gibt jetzt strukturiert ein Dictionary mit Antworttext und visuellen Links zurück.
+    """
     output = {}
     scored_chunks = []
 
@@ -77,7 +94,12 @@ def run_pipeline(query: str) -> str:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden!")
-        return "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen."
+        return {
+            "answer": "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen.",
+            "has_image": False,
+            "image_source": None,
+            "caption": None
+        }
 
     client = OpenAI(
         api_key=api_key,
@@ -121,7 +143,12 @@ def run_pipeline(query: str) -> str:
     
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
-        return "Keine relevanten Suchergebnisse gefunden."
+        return {
+            "answer": "Keine relevanten Suchergebnisse gefunden.",
+            "has_image": False,
+            "image_source": None,
+            "caption": None
+        }
         
     if isinstance(results, str):
         results = [{"title": "Search Fallback", "url": "https://en.wikipedia.org", "snippet": results}]
@@ -196,7 +223,8 @@ def run_pipeline(query: str) -> str:
             label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
     
-    xml_context = build_xml_context_from_clusters(output)
+    # NEU: Wir fangen hier die Bild-Rückgaben der Extraktions-Ebene ab
+    xml_context, found_image, found_caption = build_xml_context_from_clusters(output)
     system_prompt = get_english_extraction_prompt()
 
     print("[DEBUG] Generiere die REIN ENGLISCHE Kernantwort über Groq...")
@@ -215,7 +243,12 @@ def run_pipeline(query: str) -> str:
         english_answer = response.choices[0].message.content
         print(f"\n--- [INTERNE ENGLISCHE KERNANTWORT] ---\n{english_answer}\n---------------------------------------\n")
     except Exception as e:
-        return f"Fehler bei der internen LLM-Generierung: {str(e)}"
+        return {
+            "answer": f"Fehler bei der internen LLM-Generierung: {str(e)}",
+            "has_image": False,
+            "image_source": None,
+            "caption": None
+        }
 
     # =========================================================================
     # SCHRITT 3: RÜCK-ÜBERSETZUNG IN DIE AUSGANGSSPRACHE (Englisch -> Zielsprache)
@@ -245,8 +278,21 @@ def run_pipeline(query: str) -> str:
         )
         final_answer = final_response.choices[0].message.content
         print("=== ENDE PIPELINE-DEBUG (ERFOLGREICH) ===\n")
-        return final_answer
+        
+        # HIER ERFOLGT NUN DIE STRUKTURIERTE RÜCKGABE ALS DICTIONARY
+        return {
+            "answer": final_answer,
+            "has_image": True if found_image else False,
+            "image_source": found_image,
+            "caption": found_caption
+        }
 
     except Exception as e:
         print(f"[FEHLER] Rückübersetzung fehlgeschlagen: {str(e)}")
-        return english_answer  # Fallback: Falls die Übersetzung crasht, gib wenigstens das saubere Englisch aus
+        # Sauberes Fallback-Dictionary, falls die Übersetzung scheitert
+        return {
+            "answer": english_answer,
+            "has_image": True if found_image else False,
+            "image_source": found_image,
+            "caption": found_caption
+        }
