@@ -50,7 +50,7 @@ if user_query.strip() != "":
                 str_web.image(
                     pipeline_result["image_source"],
                     caption=pipeline_result["caption"],
-                    use_container_width=True
+                    width="stretch"  # KORRIGIERT: Ersetzt use_container_width=True
                 )
             
             # -----------------------------------------------------------------
@@ -69,7 +69,7 @@ if user_query.strip() != "":
                         str_web.image(
                             image_urls[idx], 
                             caption=f"Referenz {idx + 1}", 
-                            use_container_width=True
+                            width="stretch"  # KORRIGIERT: Ersetzt use_container_width=True
                         )
             else:
                 str_web.write("Keine weiteren passenden Referenzbilder im Web gefunden.")
