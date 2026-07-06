@@ -1,6 +1,7 @@
 import streamlit as str_web
 import os
 import sys
+from urllib.parse import urlparse
 
 # Interner Systempfad-Abgleich
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -9,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from infohub.pipeline import run_pipeline
 from infohub.retrieval.search_engine import search_images
 
-# 1. VISUELLE BEREINIGUNG
+# 1. VISUELLE BEREINIGUNG: Start ohne Streamlit-Rahmenmenüs
 str_web.set_page_config(page_title="InfoHub AI", page_icon="🤖", layout="centered")
 
 hide_style = """
@@ -34,7 +35,7 @@ user_query = str_web.text_input(
 if user_query.strip() != "":
     with str_web.spinner("Suche läuft..."):
         try:
-            # Führt die Pipeline aus (liefert Antwort, Bilder und die bereinigte Query)
+            # Führt die Pipeline aus (liefert Antwort, Bild-Metadaten und Phrasen)
             pipeline_result = run_pipeline(user_query)
             
             # Die Antwort erscheint sofort direkt unter der Eingabe
@@ -42,7 +43,7 @@ if user_query.strip() != "":
             str_web.info(pipeline_result["answer"])
             
             # -----------------------------------------------------------------
-            # NEU: Direkte Anzeige des im Kontext gefundenen Bildes (Methode 1)
+            # 📌 Kontextuelle Abbildung (Aus der lokalen Wissensdatenbank)
             # -----------------------------------------------------------------
             if pipeline_result.get("has_image"):
                 str_web.markdown("### 📌 Kontextuelle Abbildung")
@@ -53,30 +54,44 @@ if user_query.strip() != "":
                 )
             
             # -----------------------------------------------------------------
-            # DER VISUELLE REFERENZ-LAYER (Zusätzliche Web-Bilder)
+            # 📸 DER VISUELLE REFERENZ-LAYER (Zusätzliche Web-Bilder mit Links)
             # -----------------------------------------------------------------
             str_web.markdown("### 📸 Visuelle Referenzen / Images")
             
-            # FALLBACK-STEUERUNG: Wir holen das übersetzte Englisch aus der Pipeline.
-            # Falls nicht vorhanden, nutzen wir ein präzisiertes medizinisches Profil als Fallback.
-            optimized_img_query = pipeline_result.get("english_query", "medical electric ring cutter tool")
+            # Vollkommen generisch: Bevorzugt die LLM-optimierte Suchphrase,
+            # nutzt sonst die englische Query und als letzten Ausweg die rohe Eingabe.
+            optimized_img_query = pipeline_result.get(
+                "image_search_phrase", 
+                pipeline_result.get("english_query", user_query)
+            )
             
-            # Wenn der Nutzer nach einem Ring-Cutter sucht, erzwingen wir den medizinischen/Goldschmied-Kontext
-            if "ring" in optimized_img_query.lower() and "cut" in optimized_img_query.lower():
-                optimized_img_query = "medical motorized ring cutter rescue tool"
+            # Holt die strukturierten Bilddaten (Liste von Dicts) aus der Search Engine
+            image_results = search_images(optimized_img_query, max_results=3)
             
-            # Nutzt jetzt die optimierte englische Query statt des rohen Amharisch!
-            image_urls = search_images(optimized_img_query, max_results=3)
-            
-            if image_urls:
-                cols = str_web.columns(len(image_urls))
+            if image_results:
+                cols = str_web.columns(len(image_results))
                 for idx, col in enumerate(cols):
                     with col:
-                        str_web.image(
-                            image_urls[idx], 
-                            caption=f"Referenz {idx + 1}", 
-                            width="stretch"
-                        )
+                        item = image_results[idx]
+                        
+                        # Sicherer Check: Verarbeite strukturiertes Wörterbuch (Dict)
+                        if isinstance(item, dict):
+                            img_url = item.get("image_url")
+                            source_url = item.get("source_url", "#")
+                            
+                            # Extrahiere die saubere Domain für die Link-Anzeige
+                            domain = urlparse(source_url).netloc if source_url != "#" else "Website-Link"
+                            
+                            if img_url:
+                                str_web.image(img_url, width="stretch")
+                                str_web.markdown(f"🔗 [{domain}]({source_url})")
+                            else:
+                                str_web.write("Bild nicht verfügbar")
+                        
+                        # Robuster Fallback, falls doch mal ein reiner URL-String geliefert wird
+                        elif isinstance(item, str) and item.startswith("http"):
+                            str_web.image(item, width="stretch")
+                            str_web.caption(f"Referenz {idx + 1}")
             else:
                 str_web.write("Keine weiteren passenden Referenzbilder im Web gefunden.")
                 
