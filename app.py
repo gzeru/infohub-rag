@@ -5,8 +5,9 @@ import sys
 # Interner Systempfad-Abgleich (passiert vollautomatisch im Hintergrund)
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Direkter Import der verarbeitenden Pipeline
+# Direkter Import der verarbeitenden Pipeline und des neuen Bild-Suchers
 from infohub.pipeline import run_pipeline
+from infohub.retrieval.search_engine import search_images  # Importiert die neue Bild-Funktion
 
 # 1. VISUELLE BEREINIGUNG: Sofortiger Start ohne Streamlit-Rahmenmenüs
 str_web.set_page_config(page_title="InfoHub AI", page_icon="🤖", layout="centered")
@@ -40,5 +41,26 @@ if user_query.strip() != "":
             str_web.markdown("---")
             str_web.info(final_answer)
             
+            # -----------------------------------------------------------------
+            # NEU: Der verallgemeinerte visuelle Referenz-Layer
+            # -----------------------------------------------------------------
+            str_web.markdown("### 📸 Visuelle Referenzen / Images")
+            
+            # Erntet bis zu 3 passende Bilder parallel zur Suchanfrage
+            image_urls = search_images(user_query, max_results=3)
+            
+            if image_urls:
+                # Erstellt nebeneinanderliegende Spalten für die Bildanzeige
+                cols = str_web.columns(len(image_urls))
+                for idx, col in enumerate(cols):
+                    with col:
+                        str_web.image(
+                            image_urls[idx], 
+                            caption=f"Referenz {idx + 1}", 
+                            use_container_width=True
+                        )
+            else:
+                str_web.write("Keine direkt passenden Bilder im Web gefunden.")
+                
         except Exception as e:
             str_web.error(f"Fehler: {str(e)}")
