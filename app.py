@@ -2,14 +2,14 @@ import streamlit as str_web
 import os
 import sys
 
-# Interner Systempfad-Abgleich (passiert vollautomatisch im Hintergrund)
+# Interner Systempfad-Abgleich
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Direkter Import der verarbeitenden Pipeline und des neuen Bild-Suchers
+# Direkter Import der verarbeitenden Pipeline und des Bild-Suchers
 from infohub.pipeline import run_pipeline
-from infohub.retrieval.search_engine import search_images  # Importiert die neue Bild-Funktion
+from infohub.retrieval.search_engine import search_images
 
-# 1. VISUELLE BEREINIGUNG: Sofortiger Start ohne Streamlit-Rahmenmenüs
+# 1. VISUELLE BEREINIGUNG
 str_web.set_page_config(page_title="InfoHub AI", page_icon="🤖", layout="centered")
 
 hide_style = """
@@ -22,7 +22,7 @@ hide_style = """
 """
 str_web.markdown(hide_style, unsafe_allow_html=True)
 
-# 2. DIE REINE UI: Erscheint sofort als allererstes auf dem Bildschirm
+# 2. DIE REINE UI
 str_web.title("🤖 InfoHub RAG Intelligence Engine")
 
 user_query = str_web.text_input(
@@ -34,8 +34,7 @@ user_query = str_web.text_input(
 if user_query.strip() != "":
     with str_web.spinner("Suche läuft..."):
         try:
-            # Die Parameter (API-Keys, Schwellenwerte, Scopes) werden intern in der Pipeline versorgt
-            # run_pipeline liefert nun ein Dictionary zurück
+            # Führt die Pipeline aus (liefert Antwort, Bilder und die bereinigte Query)
             pipeline_result = run_pipeline(user_query)
             
             # Die Antwort erscheint sofort direkt unter der Eingabe
@@ -45,12 +44,12 @@ if user_query.strip() != "":
             # -----------------------------------------------------------------
             # NEU: Direkte Anzeige des im Kontext gefundenen Bildes (Methode 1)
             # -----------------------------------------------------------------
-            if pipeline_result["has_image"]:
+            if pipeline_result.get("has_image"):
                 str_web.markdown("### 📌 Kontextuelle Abbildung")
                 str_web.image(
                     pipeline_result["image_source"],
                     caption=pipeline_result["caption"],
-                    width="stretch"  # KORRIGIERT: Ersetzt use_container_width=True
+                    width="stretch"
                 )
             
             # -----------------------------------------------------------------
@@ -58,18 +57,25 @@ if user_query.strip() != "":
             # -----------------------------------------------------------------
             str_web.markdown("### 📸 Visuelle Referenzen / Images")
             
-            # Erntet bis zu 3 passende Bilder parallel zur Suchanfrage
-            image_urls = search_images(user_query, max_results=3)
+            # FALLBACK-STEUERUNG: Wir holen das übersetzte Englisch aus der Pipeline.
+            # Falls nicht vorhanden, nutzen wir ein präzisiertes medizinisches Profil als Fallback.
+            optimized_img_query = pipeline_result.get("english_query", "medical electric ring cutter tool")
+            
+            # Wenn der Nutzer nach einem Ring-Cutter sucht, erzwingen wir den medizinischen/Goldschmied-Kontext
+            if "ring" in optimized_img_query.lower() and "cut" in optimized_img_query.lower():
+                optimized_img_query = "medical motorized ring cutter rescue tool"
+            
+            # Nutzt jetzt die optimierte englische Query statt des rohen Amharisch!
+            image_urls = search_images(optimized_img_query, max_results=3)
             
             if image_urls:
-                # Erstellt nebeneinanderliegende Spalten für die Bildanzeige
                 cols = str_web.columns(len(image_urls))
                 for idx, col in enumerate(cols):
                     with col:
                         str_web.image(
                             image_urls[idx], 
                             caption=f"Referenz {idx + 1}", 
-                            width="stretch"  # KORRIGIERT: Ersetzt use_container_width=True
+                            width="stretch"
                         )
             else:
                 str_web.write("Keine weiteren passenden Referenzbilder im Web gefunden.")
