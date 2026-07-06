@@ -25,7 +25,7 @@ def build_xml_context_from_clusters(pipeline_output: dict) -> tuple:
     Returns: (xml_context_string, image_url, image_caption)
     """
     if not pipeline_output:
-        return "<search_knowledge_base>\n  <!-- Keine relevanten Daten gefunden -->\n</search_knowledge_base>", None, None
+        return "<search_knowledge_base>\n  \n</search_knowledge_base>", None, None
 
     context_elements = ["<search_knowledge_base>"]
     found_image = None
@@ -90,7 +90,7 @@ def run_pipeline(query: str) -> dict:
 
     print(f"\n=== START PIPELINE-DEBUG FÜR QUERY: '{query}' ===")
 
-    # API-Key Überprüfung vorab (für alle LLM-Schritte über Groq zwingend nötig)
+    # API-Key Überprüfung vorab (Fehlerpfad angepasst auf Dictionary)
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         print("[WARNUNG] Kein GROQ_API_KEY in Umgebungsvariablen gefunden!")
@@ -141,6 +141,7 @@ def run_pipeline(query: str) -> dict:
     # =========================================================================
     results = search(english_query)
     
+    # Abbruchpfad angepasst auf Dictionary
     if not results:
         print("Suchmaschine liefert keine Ergebnisse. Pipeline bricht sauber ab.")
         return {
@@ -185,19 +186,14 @@ def run_pipeline(query: str) -> dict:
             continue
 
         chunks = segment_text(text)
-        valid_chunks_count = 0
-        passed_threshold_count = 0
-
         for chunk in chunks:
             if not is_meaningful(chunk):
                 continue
-            valid_chunks_count += 1
 
             score = score_relevance(english_query, chunk)
 
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
-                passed_threshold_count += 1
 
     scored_chunks.sort(key=lambda x: x[0], reverse=True)
 
@@ -223,7 +219,7 @@ def run_pipeline(query: str) -> dict:
             label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
     
-    # NEU: Wir fangen hier die Bild-Rückgaben der Extraktions-Ebene ab
+    # Bild-Rückgaben extrahieren
     xml_context, found_image, found_caption = build_xml_context_from_clusters(output)
     system_prompt = get_english_extraction_prompt()
 
@@ -243,6 +239,7 @@ def run_pipeline(query: str) -> dict:
         english_answer = response.choices[0].message.content
         print(f"\n--- [INTERNE ENGLISCHE KERNANTWORT] ---\n{english_answer}\n---------------------------------------\n")
     except Exception as e:
+        # Fehlerpfad angepasst auf Dictionary
         return {
             "answer": f"Fehler bei der internen LLM-Generierung: {str(e)}",
             "has_image": False,
@@ -279,7 +276,6 @@ def run_pipeline(query: str) -> dict:
         final_answer = final_response.choices[0].message.content
         print("=== ENDE PIPELINE-DEBUG (ERFOLGREICH) ===\n")
         
-        # HIER ERFOLGT NUN DIE STRUKTURIERTE RÜCKGABE ALS DICTIONARY
         return {
             "answer": final_answer,
             "has_image": True if found_image else False,
@@ -289,7 +285,6 @@ def run_pipeline(query: str) -> dict:
 
     except Exception as e:
         print(f"[FEHLER] Rückübersetzung fehlgeschlagen: {str(e)}")
-        # Sauberes Fallback-Dictionary, falls die Übersetzung scheitert
         return {
             "answer": english_answer,
             "has_image": True if found_image else False,
