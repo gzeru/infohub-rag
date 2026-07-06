@@ -35,14 +35,26 @@ if user_query.strip() != "":
     with str_web.spinner("Suche läuft..."):
         try:
             # Die Parameter (API-Keys, Schwellenwerte, Scopes) werden intern in der Pipeline versorgt
-            final_answer = run_pipeline(user_query)
+            # run_pipeline liefert nun ein Dictionary zurück
+            pipeline_result = run_pipeline(user_query)
             
             # Die Antwort erscheint sofort direkt unter der Eingabe
             str_web.markdown("---")
-            str_web.info(final_answer)
+            str_web.info(pipeline_result["answer"])
             
             # -----------------------------------------------------------------
-            # NEU: Der verallgemeinerte visuelle Referenz-Layer
+            # NEU: Direkte Anzeige des im Kontext gefundenen Bildes (Methode 1)
+            # -----------------------------------------------------------------
+            if pipeline_result["has_image"]:
+                str_web.markdown("### 📌 Kontextuelle Abbildung")
+                str_web.image(
+                    pipeline_result["image_source"],
+                    caption=pipeline_result["caption"],
+                    use_container_width=True
+                )
+            
+            # -----------------------------------------------------------------
+            # DER VISUELLE REFERENZ-LAYER (Zusätzliche Web-Bilder)
             # -----------------------------------------------------------------
             str_web.markdown("### 📸 Visuelle Referenzen / Images")
             
@@ -60,7 +72,7 @@ if user_query.strip() != "":
                             use_container_width=True
                         )
             else:
-                str_web.write("Keine direkt passenden Bilder im Web gefunden.")
+                str_web.write("Keine weiteren passenden Referenzbilder im Web gefunden.")
                 
         except Exception as e:
             str_web.error(f"Fehler: {str(e)}")
