@@ -1,5 +1,6 @@
 import re
 import os
+from urllib.parse import urlparse
 from tavily import TavilyClient
 
 
@@ -85,8 +86,11 @@ def search(query: str, max_results: int = 2) -> list:
 
 def search_images(query: str, max_results: int = 3) -> list:
     """
-    NEU: Nutzt Tavily, um relevante Bild-URLs passend zur Suchanfrage zu finden.
-    Gibt eine saubere Liste von direkten Bild-URLs (Strings) zurück.
+    KORRIGIERT & GENERISCH: Nutzt Tavily, um relevante Bilder zu finden.
+    Gibt anstelle von reinen Strings eine Liste von strukturierten Dictionaries zurück,
+    die sowohl die Bild-URL als auch die dazugehörige Website-Quelle enthalten.
+    
+    Format: [{"image_url": "...", "source_url": "...", "title": "..."}, ...]
     """
     search_phrase = optimize_query_generically(query)
     
@@ -98,9 +102,9 @@ def search_images(query: str, max_results: int = 3) -> list:
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
     client = TavilyClient(api_key=TAVILY_API_KEY)
     
-    image_urls = []
+    structured_images = []
     try:
-        # Tavily Suche mit aktiviertem Bild-Parameter aufrufen
+        # Tavily Suche mit Bildern UND Web-Resultaten aufrufen
         response = client.search(
             query=search_phrase,
             search_depth="basic",
@@ -108,20 +112,42 @@ def search_images(query: str, max_results: int = 3) -> list:
             max_results=max_results
         )
         
-        # Extrahieren der Bilderliste aus dem Antwort-Payload
         raw_images = response.get("images", [])
+        web_results = response.get("results", [])
         
-        for img in raw_images:
-            # Tavily kann Bilder als Strings oder Dicts zurückgeben. Beides wird hier sicher abgefangen:
-            img_url = img.get("url") if isinstance(img, dict) else img
-            if img_url and str(img_url).startswith("http"):
-                image_urls.append(str(img_url))
+        for idx, img in enumerate(raw_images):
+            # Fallunterscheidung: Tavily kann Bilder als Dicts oder rohe Strings liefern
+            if isinstance(img, dict):
+                img_url = img.get("url")
+                img_title = img.get("description", "Image Reference")
+            else:
+                img_url = img
+                img_title = "Image Reference"
                 
-            if len(image_urls) == max_results:
+            if not img_url or not str(img_url).startswith("http"):
+                continue
+
+            # Dynamisches Mapping der Quell-Website:
+            # Wir versuchen das Bild mit dem gleichindizierten Web-Resultat zu verknüpfen
+            if idx < len(web_results):
+                source_url = web_results[idx].get("url", img_url)
+                if not img_title or img_title == "Image Reference":
+                    img_title = web_results[idx].get("title", "Image Reference")
+            else:
+                # Fallback: Wenn keine Web-Resultate mehr da sind, nutzen wir das Bild selbst als Quelle
+                source_url = img_url
+            
+            structured_images.append({
+                "image_url": str(img_url),
+                "source_url": str(source_url),
+                "title": str(img_title)
+            })
+                
+            if len(structured_images) == max_results:
                 break
                 
-        print(f"[DEBUG] Bildersuche erfolgreich! {len(image_urls)} Bilder geladen.")
+        print(f"[DEBUG] Strukturierte Bildersuche erfolgreich! {len(structured_images)} Datensätze geladen.")
     except Exception as e:
         print(f"[ERROR] Tavily Bildersuche fehlgeschlagen: {e}")
         
-    return image_urls
+    return structured_images
