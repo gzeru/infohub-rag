@@ -250,6 +250,38 @@ def run_pipeline(query: str) -> dict:
     # =========================================================================
     # SCHRITT 3: RÜCK-ÜBERSETZUNG IN DIE AUSGANGSSPRACHE (Englisch -> Zielsprache)
     # =========================================================================
+    
+    # NEU: Überprüfe deterministisch, ob die ursprüngliche Quellabfrage bereits Englisch war.
+    # Wenn ja, umgehen wir die Rückübersetzung komplett, um Sprachverzerrungen zu verhindern.
+    print("[DEBUG] Überprüfe Quellsprache für Rückübersetzung...")
+    try:
+        lang_check_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Analyze the text. Output exactly 'YES' if the text is primarily in English, or 'NO' if it is in any other language. Do not output anything else."
+                },
+                {"role": "user", "content": query}
+            ],
+            temperature=0.0
+        )
+        is_native_english = "YES" in lang_check_response.choices[0].message.content.strip().upper()
+    except Exception as e:
+        print(f"[WARNUNG] Sprachprüfung fehlgeschlagen ({str(e)}). Nutze sicheren Standard-Pfad.")
+        is_native_english = False
+
+    if is_native_english:
+        print("[DEBUG] Quellabfrage ist Englisch. Überspringe Rückübersetzung vollständig.")
+        print("=== ENDE PIPELINE-DEBUG (ERFOLGREICH) ===\n")
+        return {
+            "answer": english_answer,
+            "has_image": True if found_image else False,
+            "image_source": found_image,
+            "caption": found_caption
+        }
+
+    # Fortfahren mit Rückübersetzung für Nicht-Englische Sprachen
     print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache der Query...")
     try:
         final_response = client.chat.completions.create(
