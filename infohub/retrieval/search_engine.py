@@ -81,3 +81,47 @@ def search(query: str, max_results: int = 2) -> list:
     except Exception as e:
         print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}")
         return []
+
+
+def search_images(query: str, max_results: int = 3) -> list:
+    """
+    NEU: Nutzt Tavily, um relevante Bild-URLs passend zur Suchanfrage zu finden.
+    Gibt eine saubere Liste von direkten Bild-URLs (Strings) zurück.
+    """
+    search_phrase = optimize_query_generically(query)
+    
+    # Geografischen Kontext mitsenden, falls nötig
+    if "eeu" in search_phrase or "eep" in search_phrase:
+        if "ethiopia" not in search_phrase:
+            search_phrase = f"Ethiopia {search_phrase}"
+            
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
+    client = TavilyClient(api_key=TAVILY_API_KEY)
+    
+    image_urls = []
+    try:
+        # Tavily Suche mit aktiviertem Bild-Parameter aufrufen
+        response = client.search(
+            query=search_phrase,
+            search_depth="basic",
+            include_images=True,
+            max_results=max_results
+        )
+        
+        # Extrahieren der Bilderliste aus dem Antwort-Payload
+        raw_images = response.get("images", [])
+        
+        for img in raw_images:
+            # Tavily kann Bilder als Strings oder Dicts zurückgeben. Beides wird hier sicher abgefangen:
+            img_url = img.get("url") if isinstance(img, dict) else img
+            if img_url and str(img_url).startswith("http"):
+                image_urls.append(str(img_url))
+                
+            if len(image_urls) == max_results:
+                break
+                
+        print(f"[DEBUG] Bildersuche erfolgreich! {len(image_urls)} Bilder geladen.")
+    except Exception as e:
+        print(f"[ERROR] Tavily Bildersuche fehlgeschlagen: {e}")
+        
+    return image_urls
