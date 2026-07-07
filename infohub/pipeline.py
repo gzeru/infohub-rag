@@ -98,7 +98,8 @@ def run_pipeline(query: str) -> dict:
             "answer": "Fehler: GROQ_API_KEY fehlt. Bitte in den Streamlit Secrets hinterlegen.",
             "has_image": False,
             "image_source": None,
-            "caption": None
+            "caption": None,
+            "english_query": query
         }
 
     client = OpenAI(
@@ -153,7 +154,8 @@ def run_pipeline(query: str) -> dict:
             "answer": "Keine relevanten Suchergebnisse gefunden.",
             "has_image": False,
             "image_source": None,
-            "caption": None
+            "caption": None,
+            "english_query": english_query
         }
         
     if isinstance(results, str):
@@ -252,7 +254,8 @@ def run_pipeline(query: str) -> dict:
             "answer": f"Fehler bei der internen LLM-Generierung: {str(e)}",
             "has_image": False,
             "image_source": None,
-            "caption": None
+            "caption": None,
+            "english_query": english_query
         }
 
     # =========================================================================
@@ -283,7 +286,8 @@ def run_pipeline(query: str) -> dict:
             "answer": english_answer,
             "has_image": True if found_image else False,
             "image_source": found_image,
-            "caption": found_caption
+            "caption": found_caption,
+            "english_query": english_query  # <-- KORREKTUR HIER
         }
 
     print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache...")
@@ -316,7 +320,8 @@ def run_pipeline(query: str) -> dict:
             "answer": final_answer,
             "has_image": True if found_image else False,
             "image_source": found_image,
-            "caption": found_caption
+            "caption": found_caption,
+            "english_query": english_query  # <-- KORREKTUR HIER
         }
 
     except Exception as e:
@@ -325,5 +330,6 @@ def run_pipeline(query: str) -> dict:
             "answer": english_answer,
             "has_image": True if found_image else False,
             "image_source": found_image,
-            "caption": found_caption
+            "caption": found_caption,
+            "english_query": english_query  # <-- KORREKTUR HIER
         }
