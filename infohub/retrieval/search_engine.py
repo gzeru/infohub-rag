@@ -3,20 +3,28 @@ import os
 from urllib.parse import urlparse
 from tavily import TavilyClient
 
+# Neuer, stabiler Fallback-Import (Standardbibliothek oder leichtgewichtiges Paket)
+try:
+    from duckduckgo_search import DDGS
+    DDG_AVAILABLE = True
+except ImportError:
+    DDG_AVAILABLE = False
+
 
 def optimize_query_generically(raw_query: str) -> str:
     """
     Cleans up conversational and filler words from a user prompt
     to make it highly effective for search engines.
     """
+    if not raw_query or not isinstance(raw_query, str):
+        return ""
+
     # Convert to lowercase for uniform processing
     clean_query = raw_query.lower()
 
     # Remove conversational phrases and filler words across English and German
     fillers = [
-        r"\bhow does\b", r"\bwhy is\b", r"\bwhat is\b", r"\bplease tell me about\b",
-        r"\bworks\b", r"\bwork\b", r"\bexplain\b", r"\bshow me\b", r"\bthe\b",
-        r"\ba\b", r"\ban\b", r"\bis\b", r"\bdoes\b", r"\bdo\b",
+        r"\bplease tell me about\b", r"\bexplain\b", r"\bshow me\b",
         r"\bwie funktioniert\b", r"\bwas ist\b", r"\bwarum ist\b"
     ]
 
@@ -30,22 +38,53 @@ def optimize_query_generically(raw_query: str) -> str:
     return clean_query if clean_query else raw_query
 
 
+def _fallback_web_search(search_phrase: str, max_results: int) -> list:
+    """Kostenloser, stabiler Ausfallschutz über DuckDuckGo, falls Tavily streikt."""
+    if not DDG_AVAILABLE:
+        print("[WARNUNG] DuckDuckGo-Paket 'duckduckgo_search' nicht installiert. Kein Fallback möglich.")
+        return []
+    
+    print(f"[FALLBACK] Starte Notfall-Suche über DuckDuckGo für: '{search_phrase}'")
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(search_phrase, max_results=max_results))
+            
+        mapped = []
+        for item in results:
+            url = item.get("href", "")
+            if ".m.wikipedia.org" in url:
+                url = url.replace(".m.wikipedia.org", ".wikipedia.org")
+                
+            mapped.append({
+                "title": item.get("title", ""),
+                "url": url,
+                "snippet": item.get("body", "")
+            })
+        return mapped
+    except Exception as e:
+        print(f"[CRITICAL] Auch Notfall-Suche über DuckDuckGo fehlgeschlagen: {e}")
+        return []
+
+
 def search(query: str, max_results: int = 2) -> list:
     """
-    Vollkommen generisch: Optimiert die Abfrage und holt Suchergebnisse
-    als Liste von Dictionaries über die Tavily API.
+    Holt Suchergebnisse über die Tavily API. 
+    Weicht bei Fehlern oder Timeout automatisch auf DuckDuckGo aus.
     """
-    # 1. Clean the incoming query
     search_phrase = optimize_query_generically(query)
     
-    # 2. Initialize Tavily Client
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
-    client = TavilyClient(api_key=TAVILY_API_KEY)
+    # Schlüssel-Sicherheit: Nutze Umgebungsvariable, sonst ein leeres Fallback-Feld statt Hardcoding
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+    
+    if not TAVILY_API_KEY:
+        print("[WARNUNG] Kein TAVILY_API_KEY in Umgebungsvariablen gesetzt. Weiche direkt auf Fallback aus.")
+        return _fallback_web_search(search_phrase, max_results)
 
     print(f"[DEBUG] Sende optimierte Query an Tavily API: '{search_phrase}'")
-    
     raw_mapped_results = []
+    
     try:
+        client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(
             query=search_phrase, 
             search_depth="basic", 
@@ -56,8 +95,6 @@ def search(query: str, max_results: int = 2) -> list:
         
         for item in raw_results:
             url = item.get("url", "")
-            
-            # Wikipedia Desktop-Normalisierung (generisch für alle Sprachen)
             if ".m.wikipedia.org" in url:
                 url = url.replace(".m.wikipedia.org", ".wikipedia.org")
                 
@@ -71,22 +108,24 @@ def search(query: str, max_results: int = 2) -> list:
         return raw_mapped_results
 
     except Exception as e:
-        print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}")
-        return []
+        print(f"[ERROR] Tavily Suchaufruf fehlgeschlagen: {e}. Starte automatische Schadensbegrenzung...")
+        return _fallback_web_search(search_phrase, max_results)
 
 
 def search_images(query: str, max_results: int = 3) -> list:
     """
-    Vollkommen generisch: Sucht nach Bildern und verknüpft sie dynamisch mit den 
-    Quell-Websites, ohne jegliche feste Filter oder länderspezifische Begriffe.
+    Sucht nach Bildern über Tavily. Fängt Ausfälle sauber ab.
     """
     search_phrase = optimize_query_generically(query)
-            
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "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")
-    client = TavilyClient(api_key=TAVILY_API_KEY)
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+    
+    if not TAVILY_API_KEY:
+        print("[WARNUNG] Kein TAVILY_API_KEY für Bildersuche vorhanden.")
+        return []
     
     structured_images = []
     try:
+        client = TavilyClient(api_key=TAVILY_API_KEY)
         response = client.search(
             query=search_phrase,
             search_depth="basic",
@@ -108,7 +147,6 @@ def search_images(query: str, max_results: int = 3) -> list:
             if not img_url or not img_url.startswith("http"):
                 continue
 
-            # Generische Zuordnung der Quelle: Verknüpfung mit dem Web-Resultat über den Index
             if idx < len(web_results) and isinstance(web_results[idx], dict):
                 source_url = web_results[idx].get("url", img_url)
                 if img_title == "Image Reference":
