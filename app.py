@@ -50,7 +50,7 @@ if user_query.strip() != "":
                 str_web.image(
                     pipeline_result["image_source"],
                     caption=pipeline_result["caption"],
-                    width="stretch"
+                    use_container_width=True
                 )
             
             # -----------------------------------------------------------------
@@ -71,27 +71,28 @@ if user_query.strip() != "":
             if image_results:
                 cols = str_web.columns(len(image_results))
                 for idx, col in enumerate(cols):
-                    with col:
-                        item = image_results[idx]
+                    item = image_results[idx]
+                    
+                    # Sicherer Check: Verarbeite strukturiertes Wörterbuch (Dict)
+                    if isinstance(item, dict):
+                        img_url = item.get("image_url")
+                        source_url = item.get("source_url", "#")
                         
-                        # Sicherer Check: Verarbeite strukturiertes Wörterbuch (Dict)
-                        if isinstance(item, dict):
-                            img_url = item.get("image_url")
-                            source_url = item.get("source_url", "#")
-                            
-                            # Extrahiere die saubere Domain für die Link-Anzeige
-                            domain = urlparse(source_url).netloc if source_url != "#" else "Website-Link"
-                            
-                            if img_url:
-                                str_web.image(img_url, width="stretch")
-                                str_web.markdown(f"🔗 [{domain}]({source_url})")
-                            else:
-                                str_web.write("Bild nicht verfügbar")
+                        # Extrahiere die saubere Domain für die Link-Anzeige
+                        domain = urlparse(source_url).netloc if source_url != "#" else "Website-Link"
                         
-                        # Robuster Fallback, falls doch mal ein reiner URL-String geliefert wird
-                        elif isinstance(item, str) and item.startswith("http"):
-                            str_web.image(item, width="stretch")
-                            str_web.caption(f"Referenz {idx + 1}")
+                        if img_url:
+                            # CRITICAL FIX: Nutze col.image() und col.markdown(), um im Grid zu bleiben!
+                            col.image(img_url, use_container_width=True)
+                            col.markdown(f"🔗 [{domain}]({source_url})")
+                        else:
+                            col.write("Bild nicht verfügbar")
+                    
+                    # Robuster Fallback, falls doch mal ein reiner URL-String geliefert wird
+                    elif isinstance(item, str) and item.startswith("http"):
+                        # CRITICAL FIX: Auch hier über das Spalten-Objekt rendern!
+                        col.image(item, use_container_width=True)
+                        col.caption(f"Referenz {idx + 1}")
             else:
                 str_web.write("Keine weiteren passenden Referenzbilder im Web gefunden.")
                 
