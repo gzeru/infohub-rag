@@ -126,7 +126,7 @@ def run_pipeline(query: str) -> dict:
                         "3. Preserve acronyms (EEU, EEP) and proper nouns (Ethiopia) as they are.\n"
                         "4. Output ONLY the raw English translation. No explanations, no markdown, no conversational text.\n\n"
                         "TECHNICAL DICTIONARY EXAMPLES:\n"
-                        "- 'የቀለበት መቁረጫ መሳርያ אሳየኝ' -> 'Show me a ring cutting tool'\n"
+                        "- 'የቀለበት መቁረጫ መሳርያ አሳየኝ' -> 'Show me a ring cutting tool'\n"
                         "- 'የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Hand ring cutter tool'\n"
                         "- 'የኤሌክትሪክ የእጅ ቀለበት መቁረጫ መሳሪያ' -> 'Electric hand ring cutting tool'\n"
                         "- 'የኢትዮጵያ ኤሌክትሪክ አገልግሎት' -> 'Ethiopian Electric Utility'\n"
@@ -184,9 +184,10 @@ def run_pipeline(query: str) -> dict:
         
         try:
             page = fetch(url)
-            if not page:
-                raise ValueError("Empty response from fetcher")
-            html_content = page.get("content", "") if isinstance(page, dict) else (page if isinstance(page, str) else "")
+            html_content = ""
+            if page:
+                html_content = page.get("content", "") if isinstance(page, dict) else (page if isinstance(page, str) else "")
+            
             text = extract_text(html_content) if html_content else ""
         except Exception as fetch_err:
             print(f"    [FETCH-FEHLER] Überspringe {url} aufgrund von: {str(fetch_err)}")
@@ -206,6 +207,17 @@ def run_pipeline(query: str) -> dict:
             score = score_relevance(english_query, chunk)
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
+
+    # CRITICAL FIX: Falls kein einziger Chunk den Schwellenwert erreicht hat
+    if not scored_chunks:
+        print("[DEBUG] Keine Chunks über dem Relevanz-Threshold. Breche Inferenz sauber ab.")
+        return {
+            "answer": "No sufficient or reliable context found in the database to accurately answer your request.",
+            "has_image": False,
+            "image_source": None,
+            "caption": None,
+            "english_query": english_query
+        }
 
     scored_chunks.sort(key=lambda x: x[0], reverse=True)
 
@@ -230,6 +242,16 @@ def run_pipeline(query: str) -> dict:
             representative = pick_representative_sentence(english_query, cluster)
             label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
+    
+    # CRITICAL FIX: Absicherung falls Clustering leer ausgeht
+    if not output:
+        return {
+            "answer": "No tightly clustered information available for extraction.",
+            "has_image": False,
+            "image_source": None,
+            "caption": None,
+            "english_query": english_query
+        }
     
     xml_context, found_image, found_caption = build_xml_context_from_clusters(output)
     system_prompt = get_english_extraction_prompt()
@@ -287,7 +309,7 @@ def run_pipeline(query: str) -> dict:
             "has_image": True if found_image else False,
             "image_source": found_image,
             "caption": found_caption,
-            "english_query": english_query  # <-- KORREKTUR HIER
+            "english_query": english_query
         }
 
     print(f"[DEBUG] Übersetze die englische Antwort zurück in die Ausgangssprache...")
@@ -321,7 +343,7 @@ def run_pipeline(query: str) -> dict:
             "has_image": True if found_image else False,
             "image_source": found_image,
             "caption": found_caption,
-            "english_query": english_query  # <-- KORREKTUR HIER
+            "english_query": english_query
         }
 
     except Exception as e:
@@ -331,5 +353,5 @@ def run_pipeline(query: str) -> dict:
             "has_image": True if found_image else False,
             "image_source": found_image,
             "caption": found_caption,
-            "english_query": english_query  # <-- KORREKTUR HIER
+            "english_query": english_query
         }
