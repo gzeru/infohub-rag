@@ -9,3 +9,4 @@ torchvision
 groq
 tavily-python
 openai
+duckduckgo_search
