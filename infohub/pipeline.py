@@ -281,7 +281,7 @@ def run_pipeline(query: str) -> dict:
         }
 
     # =========================================================================
-    # SCHRITT 3: RÜCK-ÜBERSETZUNG (Generische, linguistische Optimierung)
+    # SCHRITT 3: RÜCK-ÜBERSETZUNG (Mit rein generischer Domänen-Verifikation)
     # =========================================================================
     print("[DEBUG] Überprüfe Quellsprache für Rückübersetzung...")
     try:
@@ -322,6 +322,12 @@ def run_pipeline(query: str) -> dict:
                     "content": (
                         "You are an advanced, context-aware technical translator specializing in adapting complex English text "
                         "into grammatically flawless translations matching the user's source language (especially low-resource languages like Amharic).\n\n"
+                        
+                        "CRITICAL GENERIC VERIFICATION RULE:\n"
+                        "Before outputting the final translation, perform a strict internal verification check:\n"
+                        "1. Cross-reference every translated noun and core concept back to the original English text.\n"
+                        "2. Ensure that the translated word belongs to the exact same semantic domain (e.g., medical, technical, industrial) as the source word.\n"
+                        "3. If a translated word shifts the meaning into an unrelated domain (e.g., transforming a technical/medical term into a rural, poetic, or agriculture-related concept), you must reject it and replace it with the precise professional or contextual equivalent.\n\n"
                         
                         "Follow this execution pipeline to ensure high-quality output:\n"
                         "1. IDENTIFY TECHNICAL ENTITIES: Scan the English text for acronyms, technical terms, proper nouns, "
