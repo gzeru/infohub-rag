@@ -208,7 +208,7 @@ def run_pipeline(query: str) -> dict:
             if score >= threshold:
                 scored_chunks.append((score, chunk, url))
 
-    # CRITICAL FIX: Falls kein einziger Chunk den Schwellenwert erreicht hat
+    # Fallback: Falls kein einziger Chunk den Schwellenwert erreicht hat
     if not scored_chunks:
         print("[DEBUG] Keine Chunks über dem Relevanz-Threshold. Breche Inferenz sauber ab.")
         return {
@@ -243,7 +243,7 @@ def run_pipeline(query: str) -> dict:
             label = representative.strip() if (representative and len(representative) < 90 and "youtube" not in representative.lower()) else f"Relevante Suchergebnisse Gruppe {i+1}"
             output[label] = cluster[:3]
     
-    # CRITICAL FIX: Absicherung falls Clustering leer ausgeht
+    # Fallback falls Clustering leer ausgeht
     if not output:
         return {
             "answer": "No tightly clustered information available for extraction.",
@@ -281,7 +281,7 @@ def run_pipeline(query: str) -> dict:
         }
 
     # =========================================================================
-    # SCHRITT 3: RÜCK-ÜBERSETZUNG (Mit striktem Erhalt von Fachbegriffen)
+    # SCHRITT 3: RÜCK-ÜBERSETZUNG (Generische, linguistische Optimierung)
     # =========================================================================
     print("[DEBUG] Überprüfe Quellsprache für Rückübersetzung...")
     try:
@@ -320,12 +320,19 @@ def run_pipeline(query: str) -> dict:
                 {
                     "role": "system",
                     "content": (
-                        "You are a professional translator. Your task is to translate the provided English text "
-                        "into the exact language of the user's original query.\n\n"
-                        "Rules:\n"
-                        "1. Match the language: Detect the language of the 'ORIGINAL QUERY' and translate the 'ENGLISH ANSWER' into that exact language.\n"
-                        "2. Total fidelity: Keep all numbers, facts, acronyms (EEU, EEP), and data points exactly as they are in the English text. Do not omit any details.\n"
-                        "3. Output format: Return ONLY the direct translation. Do not add introductory phrases."
+                        "You are an advanced, context-aware technical translator specializing in adapting complex English text "
+                        "into grammatically flawless translations matching the user's source language (especially low-resource languages like Amharic).\n\n"
+                        
+                        "Follow this execution pipeline to ensure high-quality output:\n"
+                        "1. IDENTIFY TECHNICAL ENTITIES: Scan the English text for acronyms, technical terms, proper nouns, "
+                        "and institutional names. Keep these entities in their original English form within parentheses "
+                        "directly after their contextual translation to avoid meaning loss.\n"
+                        "2. SYNTAX RESTRUCTURING: If translating into Amharic, strictly use Subject-Object-Verb (SOV) order. "
+                        "Rearrange the English clause structure entirely so that the primary action/verb is anchored at the very end of the sentence.\n"
+                        "3. LINGUISTIC FLUENCY: Avoid literal word-for-word translation. Translate the underlying technical concept "
+                        "into natural, professional phrasing that a native speaker in a professional setting would use.\n\n"
+                        
+                        "Output ONLY the final, polished translation. Do not include any meta-commentary or introductory text."
                     )
                 },
                 {
